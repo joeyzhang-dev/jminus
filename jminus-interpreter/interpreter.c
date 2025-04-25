@@ -55,6 +55,13 @@ int eval_expr(Expr* expr) {
             if (strcmp(op, "-") == 0) return left - right;
             if (strcmp(op, "*") == 0) return left * right;
             if (strcmp(op, "/") == 0) return left / right;
+            if (strcmp(op, "==") == 0) return left == right;
+            if (strcmp(op, "!=") == 0) return left != right;
+            if (strcmp(op, "<")  == 0) return left < right;
+            if (strcmp(op, "<=") == 0) return left <= right;
+            if (strcmp(op, ">")  == 0) return left > right;
+            if (strcmp(op, ">=") == 0) return left >= right;
+
 
             fprintf(stderr, "Unknown binary operator: %s\n", op);
             exit(1);
@@ -77,17 +84,56 @@ void exec_stmt(Stmt* stmt) {
             const char* name = stmt->let.name.lexeme;
             int value = eval_expr(stmt->let.initializer);
             assign_variable(name, value);
+            printf("Assigned variable %s = %d\n", name, value);  // Debugging output
             break;
         }
 
         case STMT_YAP: {
             int value = eval_expr(stmt->yap.expression);
-            printf("%d\n", value);
+            printf("Yap output: %d\n", value);  // Debugging output
             break;
         }
 
         case STMT_EXPR: {
-            eval_expr(stmt->expr.expression);
+            Expr* expr = stmt->expr.expression;
+
+            if (expr->type == EXPR_BINARY &&
+                strcmp(expr->binary.op.lexeme, "=") == 0 &&
+                expr->binary.left->type == EXPR_VARIABLE) {
+
+                const char* name = expr->binary.left->variable.name.lexeme;
+                int value = eval_expr(expr->binary.right);
+                assign_variable(name, value);
+                printf("Re-assigned variable %s = %d\n", name, value);  // Debugging output
+            } else {
+                eval_expr(expr);  // Regular expression
+            }
+            break;
+        }
+
+        case STMT_IF: {
+            int condition = eval_expr(stmt->if_stmt.condition);
+            printf("If condition: %d\n", condition);  // Debugging output
+            if (condition) {
+                exec_stmt(stmt->if_stmt.then_branch);
+            } else if (stmt->if_stmt.else_branch) {
+                exec_stmt(stmt->if_stmt.else_branch);
+            }
+            break;
+        }
+
+        case STMT_WHILE: {
+            while (eval_expr(stmt->while_stmt.condition)) {
+                printf("While condition true\n");  // Debugging output
+                exec_stmt(stmt->while_stmt.body);
+            }
+            break;
+        }
+
+        case STMT_BLOCK: {
+            for (int i = 0; i < stmt->block.count; i++) {
+                exec_stmt(stmt->block.statements[i]);
+            }
             break;
         }
 
@@ -96,8 +142,11 @@ void exec_stmt(Stmt* stmt) {
     }
 }
 
+
+
 void interpret(Stmt** stmts, int count) {
     for (int i = 0; i < count; i++) {
         exec_stmt(stmts[i]);
     }
 }
+

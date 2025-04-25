@@ -12,6 +12,7 @@ typedef enum {
   TOKEN_FN,
   TOKEN_RETURN,
   TOKEN_IF,
+  TOKEN_ELSE,
   TOKEN_WHILE,
   TOKEN_YAP,
 

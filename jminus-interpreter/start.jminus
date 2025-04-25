@@ -1,3 +1,12 @@
-let a = 5;
-let b = a + 2 * 3;
-yap(b);
+let x = 0;
+
+while (x < 3) {
+  yap(x);
+  x = x + 1;
+}
+
+if (x == 3) {
+  yap(999);
+} else {
+  yap(0);
+}

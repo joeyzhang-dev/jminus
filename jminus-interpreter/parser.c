@@ -48,6 +48,9 @@ void* allocate(size_t size) {
 }
 
 Expr* parse_expression(); // Forward declare
+Stmt* parse_if_statement();
+Stmt* parse_while_statement();
+Stmt* parse_block_statement(); // used by both if and while
 Stmt* parse_statement();
 Stmt* parse_let_statement();
 Stmt* parse_yap_statement();
@@ -155,6 +158,7 @@ Stmt* parse_let_statement() {
 }
 
 Stmt* parse_yap_statement() {
+
   if (!match(TOKEN_LPAREN)) {
     fprintf(stderr, "Expected '(' after 'yap'\n");
     exit(1);
@@ -179,22 +183,111 @@ Stmt* parse_yap_statement() {
   return stmt;
 }
 
-Stmt* parse_statement() {
-  if (match(TOKEN_LET)) return parse_let_statement();
-  if (match(TOKEN_YAP)) return parse_yap_statement();
-
-  Expr* expr = parse_expression();
-  if (!match(TOKEN_SEMICOLON)) {
-    fprintf(stderr, "Expected ';' after expression\n");
-    exit(1);
+Stmt* parse_block_statement() {
+    Stmt** statements = allocate(sizeof(Stmt*) * 128);
+    int count = 0;
+  
+    while (!check(TOKEN_RBRACE) && !is_at_end()) {
+      statements[count++] = parse_statement();
+    }
+  
+    if (!match(TOKEN_RBRACE)) {
+      fprintf(stderr, "Expected '}' at end of block\n");
+      exit(1);
+    }
+  
+    BlockStmt block = { statements, count };
+    Stmt* stmt = allocate(sizeof(Stmt));
+    stmt->type = STMT_BLOCK;
+    stmt->block = block;
+    return stmt;
   }
+  
+  Stmt* parse_if_statement() {
+    if (!match(TOKEN_LPAREN)) {
+      fprintf(stderr, "Expected '(' after 'if'\n");
+      exit(1);
+    }
+  
+    Expr* condition = parse_expression();
+  
+    if (!match(TOKEN_RPAREN)) {
+      fprintf(stderr, "Expected ')' after condition\n");
+      exit(1);
+    }
+  
+    if (!match(TOKEN_LBRACE)) {
+      fprintf(stderr, "Expected '{' to start if block\n");
+      exit(1);
+    }
+  
+    Stmt* then_branch = parse_block_statement();
+    Stmt* else_branch = NULL;
+  
+    if (match(TOKEN_ELSE)) {
+      if (!match(TOKEN_LBRACE)) {
+        fprintf(stderr, "Expected '{' after else\n");
+        exit(1);
+      }
+      else_branch = parse_block_statement();
+    }
+  
+    IfStmt if_stmt = { condition, then_branch, else_branch };
+    Stmt* stmt = allocate(sizeof(Stmt));
+    stmt->type = STMT_IF;
+    stmt->if_stmt = if_stmt;
+    return stmt;
+  }
+  
+  Stmt* parse_while_statement() {
+    if (!match(TOKEN_LPAREN)) {
+      fprintf(stderr, "Expected '(' after 'while'\n");
+      exit(1);
+    }
+  
+    Expr* condition = parse_expression();
+  
+    if (!match(TOKEN_RPAREN)) {
+      fprintf(stderr, "Expected ')' after condition\n");
+      exit(1);
+    }
+  
+    if (!match(TOKEN_LBRACE)) {
+      fprintf(stderr, "Expected '{' to start while body\n");
+      exit(1);
+    }
+  
+    Stmt* body = parse_block_statement();
+  
+    WhileStmt while_stmt = { condition, body };
+    Stmt* stmt = allocate(sizeof(Stmt));
+    stmt->type = STMT_WHILE;
+    stmt->while_stmt = while_stmt;
+    return stmt;
+  }
+ 
+  Stmt* parse_expression_statement() {
+    Expr* expr = parse_expression();
+    if (!match(TOKEN_SEMICOLON)) {
+      fprintf(stderr, "Expected ';' after expression\n");
+      exit(1);
+    }
+  
+    ExprStmt expr_stmt = { expr };
+    Stmt* stmt = allocate(sizeof(Stmt));
+    stmt->type = STMT_EXPR;
+    stmt->expr = expr_stmt;
+    return stmt;
+  }
+  
 
-  ExprStmt e = { expr };
-  Stmt* stmt = allocate(sizeof(Stmt));
-  stmt->type = STMT_EXPR;
-  stmt->expr = e;
-  return stmt;
-}
+Stmt* parse_statement() {
+    if (match(TOKEN_LET)) return parse_let_statement();
+    if (match(TOKEN_YAP)) return parse_yap_statement();
+    if (match(TOKEN_IF)) return parse_if_statement();
+    if (match(TOKEN_WHILE)) return parse_while_statement();
+    return parse_expression_statement();
+  }
 
 // ----------------------------
 // Entry point

@@ -5,7 +5,7 @@
 #include "lexer.h"
 
 // Uncomment this to enable debug logging
-#define DEBUG
+// #define DEBUG
 
 #define MAX_TOKENS 1024
 
@@ -27,14 +27,15 @@ typedef struct {
 } Keyword;
 
 Keyword keywords[] = {
-  { "let", TOKEN_LET },
-  { "fn", TOKEN_FN },
-  { "yap", TOKEN_YAP },
-  { "return", TOKEN_RETURN },
-  { "if", TOKEN_IF },
-  { "while", TOKEN_WHILE },
-  { NULL, TOKEN_UNKNOWN }
-};
+    { "let", TOKEN_LET },
+    { "fn", TOKEN_FN },
+    { "yap", TOKEN_YAP },
+    { "return", TOKEN_RETURN },
+    { "if", TOKEN_IF },
+    { "else", TOKEN_ELSE },      
+    { "while", TOKEN_WHILE },
+    { NULL, TOKEN_UNKNOWN }
+  };
 
 TokenType check_keyword(const char* str) {
   for (int i = 0; keywords[i].keyword != NULL; i++) {
@@ -87,7 +88,7 @@ Token* tokenize(const char* src, int* token_count) {
       char* temp = malloc(length + 1);
       strncpy(temp, start, length);
       temp[length] = '\0';
-      
+
       TokenType type = check_keyword(temp);
       free(temp);
       
@@ -195,6 +196,7 @@ const char* token_type_to_string(TokenType type) {
     case TOKEN_RETURN: return "RETURN";
     case TOKEN_IF: return "IF";
     case TOKEN_WHILE: return "WHILE";
+    case TOKEN_ELSE: return "ELSE";
     case TOKEN_IDENTIFIER: return "IDENTIFIER";
     case TOKEN_INT: return "INT";
     case TOKEN_FLOAT: return "FLOAT";
