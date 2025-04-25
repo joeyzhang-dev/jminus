@@ -106,4 +106,5 @@ struct Stmt {
 Stmt** parse(Token* tokens, int token_count, int* stmt_count);
 void print_stmt(Stmt* stmt, int indent);
 
+void free_ast(Stmt** stmts, int stmt_count);
 #endif // PARSER_H

@@ -79,7 +79,10 @@ int main(int argc, char* argv[]) {
     }
 
     Bytecode* bytecode = compile(stmts, stmt_count);
+    
     run(bytecode);
+
+    free_ast(stmts, stmt_count);
 
     free_tokens(tokens, token_count);
     free_bytecode(bytecode);

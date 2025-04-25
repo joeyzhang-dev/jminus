@@ -22,7 +22,7 @@ static Token previous() {
 }
 
 static int is_at_end() {
-  return tokens[current].type == TOKEN_EOF;
+    return tokens[current].type == TOKEN_EOF;
 }
 
 static Token advance() {
@@ -42,8 +42,6 @@ static int match(TokenType type) {
     return 0;
 }
 
-
-
 void* allocate(size_t size) {
     void* node = malloc(size);
     if (!node) {
@@ -52,6 +50,68 @@ void* allocate(size_t size) {
     }
     memset(node, 0, size);
     return node;
+}
+
+// ----------------------------
+// Memory cleanup
+// ----------------------------
+static void free_expr(Expr* expr) {
+    if (!expr) return;
+    switch (expr->type) {
+        case EXPR_BINARY:
+            free_expr(expr->binary.left);
+            free_expr(expr->binary.right);
+            break;
+        case EXPR_CALL:
+            free_expr(expr->call.callee);
+            for (int i = 0; i < expr->call.arg_count; i++) {
+                free_expr(expr->call.args[i]);
+            }
+            free(expr->call.args);
+            break;
+        case EXPR_LITERAL:
+        case EXPR_VARIABLE:
+            break;
+    }
+    free(expr);
+}
+
+static void free_stmt(Stmt* stmt) {
+    if (!stmt) return;
+    switch (stmt->type) {
+        case STMT_LET:
+            free_expr(stmt->let.initializer);
+            break;
+        case STMT_EXPR:
+            free_expr(stmt->expr.expression);
+            break;
+        case STMT_YAP:
+            free_expr(stmt->yap.expression);
+            break;
+        case STMT_IF:
+            free_expr(stmt->if_stmt.condition);
+            free_stmt(stmt->if_stmt.then_branch);
+            free_stmt(stmt->if_stmt.else_branch);
+            break;
+        case STMT_WHILE:
+            free_expr(stmt->while_stmt.condition);
+            free_stmt(stmt->while_stmt.body);
+            break;
+        case STMT_BLOCK:
+            for (int i = 0; i < stmt->block.count; i++) {
+                free_stmt(stmt->block.statements[i]);
+            }
+            free(stmt->block.statements);
+            break;
+    }
+    free(stmt);
+}
+
+void free_ast(Stmt** stmts, int stmt_count) {
+    for (int i = 0; i < stmt_count; i++) {
+        free_stmt(stmts[i]);
+    }
+    free(stmts);
 }
 
 // ----------------------------
@@ -92,19 +152,20 @@ Expr* parse_primary() {
 
     if (match(TOKEN_LPAREN)) {
         Expr* expr = parse_expression();
-        if (!match(TOKEN_RPAREN)) {
+        if (!expr || !match(TOKEN_RPAREN)) {
             fprintf(stderr, "Expected ')' after expression\n");
-            exit(1);
+            return NULL;
         }
         return expr;
     }
 
     fprintf(stderr, "Unexpected token: %s\n", peek().lexeme);
-    exit(1);
+    return NULL;
 }
 
 Expr* parse_binary(Expr* (*next_fn)(), TokenType ops[], int op_count) {
     Expr* left = next_fn();
+    if (!left) return NULL;
 
     while (!is_at_end()) {
         TokenType type = peek().type;
@@ -119,6 +180,7 @@ Expr* parse_binary(Expr* (*next_fn)(), TokenType ops[], int op_count) {
 
         Token op = advance();
         Expr* right = next_fn();
+        if (!right) return NULL;
 
         BinaryExpr bin = { left, op, right };
         Expr* expr = allocate(sizeof(Expr));
@@ -150,31 +212,29 @@ Expr* parse_equality() {
     return parse_binary(parse_comparison, ops, 2);
 }
 
-// changed to allow assignment
 Expr* parse_expression() {
-  Expr* expr = parse_equality();
+    Expr* expr = parse_equality();
+    if (!expr) return NULL;
 
-  // Handle assignment like `x = ...`
-  if (match(TOKEN_ASSIGN)) {
-      Token equals = previous();
-      Expr* value = parse_expression();
+    if (match(TOKEN_ASSIGN)) {
+        Token equals = previous();
+        Expr* value = parse_expression();
+        if (!value) return NULL;
 
-      if (expr->type != EXPR_VARIABLE) {
-          fprintf(stderr, "Invalid assignment target.\n");
-          exit(1);
-      }
+        if (expr->type != EXPR_VARIABLE) {
+            fprintf(stderr, "Invalid assignment target.\n");
+            return NULL;
+        }
 
-      // Build a binary '=' expression
-      BinaryExpr bin = { expr, equals, value };
-      Expr* assignment = allocate(sizeof(Expr));
-      assignment->type = EXPR_BINARY;
-      assignment->binary = bin;
-      return assignment;
-  }
+        BinaryExpr bin = { expr, equals, value };
+        Expr* assignment = allocate(sizeof(Expr));
+        assignment->type = EXPR_BINARY;
+        assignment->binary = bin;
+        return assignment;
+    }
 
-  return expr;
+    return expr;
 }
-
 
 // ----------------------------
 // Statement Parsing
@@ -182,20 +242,21 @@ Expr* parse_expression() {
 Stmt* parse_let_statement() {
     if (!match(TOKEN_IDENTIFIER)) {
         fprintf(stderr, "Expected variable name after 'let'\n");
-        exit(1);
+        return NULL;
     }
     Token name = previous();
 
     if (!match(TOKEN_ASSIGN)) {
         fprintf(stderr, "Expected '=' after variable name\n");
-        exit(1);
+        return NULL;
     }
 
     Expr* initializer = parse_expression();
+    if (!initializer) return NULL;
 
     if (!match(TOKEN_SEMICOLON)) {
         fprintf(stderr, "Expected ';' after let initializer\n");
-        exit(1);
+        return NULL;
     }
 
     LetStmt let = { name, initializer };
@@ -208,19 +269,20 @@ Stmt* parse_let_statement() {
 Stmt* parse_yap_statement() {
     if (!match(TOKEN_LPAREN)) {
         fprintf(stderr, "Expected '(' after 'yap'\n");
-        exit(1);
+        return NULL;
     }
 
     Expr* expr = parse_expression();
+    if (!expr) return NULL;
 
     if (!match(TOKEN_RPAREN)) {
         fprintf(stderr, "Expected ')' after yap expression\n");
-        exit(1);
+        return NULL;
     }
 
     if (!match(TOKEN_SEMICOLON)) {
         fprintf(stderr, "Expected ';' after yap statement\n");
-        exit(1);
+        return NULL;
     }
 
     YapStmt yap = { expr };
@@ -233,21 +295,24 @@ Stmt* parse_yap_statement() {
 Stmt* parse_if_statement() {
     if (!match(TOKEN_LPAREN)) {
         fprintf(stderr, "Expected '(' after 'if'\n");
-        exit(1);
+        return NULL;
     }
 
     Expr* condition = parse_expression();
+    if (!condition) return NULL;
 
     if (!match(TOKEN_RPAREN)) {
         fprintf(stderr, "Expected ')' after condition\n");
-        exit(1);
+        return NULL;
     }
 
     Stmt* then_branch = parse_statement();
-    Stmt* else_branch = NULL;
+    if (!then_branch) return NULL;
 
+    Stmt* else_branch = NULL;
     if (match(TOKEN_ELSE)) {
         else_branch = parse_statement();
+        if (!else_branch) return NULL;
     }
 
     IfStmt if_stmt = { condition, then_branch, else_branch };
@@ -260,17 +325,19 @@ Stmt* parse_if_statement() {
 Stmt* parse_while_statement() {
     if (!match(TOKEN_LPAREN)) {
         fprintf(stderr, "Expected '(' after 'while'\n");
-        exit(1);
+        return NULL;
     }
 
     Expr* condition = parse_expression();
+    if (!condition) return NULL;
 
     if (!match(TOKEN_RPAREN)) {
         fprintf(stderr, "Expected ')' after while condition\n");
-        exit(1);
+        return NULL;
     }
 
     Stmt* body = parse_statement();
+    if (!body) return NULL;
 
     WhileStmt while_stmt = { condition, body };
     Stmt* stmt = allocate(sizeof(Stmt));
@@ -284,12 +351,14 @@ Stmt* parse_block_statement() {
     int count = 0;
 
     while (!check(TOKEN_RBRACE) && !is_at_end()) {
-        statements[count++] = parse_statement();
+        Stmt* stmt = parse_statement();
+        if (!stmt) return NULL;
+        statements[count++] = stmt;
     }
 
     if (!match(TOKEN_RBRACE)) {
         fprintf(stderr, "Expected '}' after block\n");
-        exit(1);
+        return NULL;
     }
 
     BlockStmt block = { statements, count };
@@ -306,11 +375,12 @@ Stmt* parse_statement() {
     if (match(TOKEN_WHILE)) return parse_while_statement();
     if (match(TOKEN_LBRACE)) return parse_block_statement();
 
-    // Otherwise just an expression statement
     Expr* expr = parse_expression();
+    if (!expr) return NULL;
+
     if (!match(TOKEN_SEMICOLON)) {
         fprintf(stderr, "Expected ';' after expression\n");
-        exit(1);
+        return NULL;
     }
 
     ExprStmt expr_stmt = { expr };
@@ -332,7 +402,13 @@ Stmt** parse(Token* token_array, int token_count, int* stmt_count) {
     int count = 0;
 
     while (!is_at_end()) {
-        stmts[count++] = parse_statement();
+        Stmt* stmt = parse_statement();
+        if (!stmt) {
+            // Parsing error happened
+            free_ast(stmts, count);
+            return NULL;
+        }
+        stmts[count++] = stmt;
     }
 
     *stmt_count = count;
