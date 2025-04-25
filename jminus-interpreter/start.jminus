@@ -1,12 +1,12 @@
 let x = 0;
 
 while (x < 3) {
-  yap(x);
-  x = x + 1;
+    yap(x);
+    x = x + 1;
 }
 
 if (x == 3) {
-  yap(999);
+    yap(999);
 } else {
-  yap(0);
+    yap(0);  
 }

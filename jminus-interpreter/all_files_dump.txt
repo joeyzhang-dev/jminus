@@ -1,0 +1,1626 @@
+
+===== ./all_files_dump.txt =====
+    
+    ===== ./all_files_dump.txt =====
+
+===== ./compiler.c =====
+    #include <stdio.h>
+    #include <stdlib.h>
+    #include <string.h>
+    #include "compiler.h"
+    #include "vm.h"
+    
+    static Bytecode* bytecode;
+    
+    static void emit(OpCode opcode, int operand) {
+        if (bytecode->count >= bytecode->capacity) {
+            bytecode->capacity *= 2;
+            bytecode->instructions = realloc(bytecode->instructions, sizeof(Instruction) * bytecode->capacity);
+        }
+        bytecode->instructions[bytecode->count++] = (Instruction){ opcode, operand };
+    }
+    
+    static int add_constant(int value) {
+        if (bytecode->const_count >= bytecode->const_capacity) {
+            bytecode->const_capacity *= 2;
+            bytecode->constants = realloc(bytecode->constants, sizeof(int) * bytecode->const_capacity);
+        }
+        bytecode->constants[bytecode->const_count] = value;
+        return bytecode->const_count++;
+    }
+    
+    static void compile_expr(Expr* expr) {
+        switch (expr->type) {
+            case EXPR_LITERAL: {
+                int value = atoi(expr->literal.value.lexeme);
+                int idx = add_constant(value);
+                emit(BC_CONST, idx);
+                break;
+            }
+            case EXPR_VARIABLE: {
+                int var_id = expr->variable.name.lexeme[0];
+                emit(BC_LOAD_VAR, var_id);
+                break;
+            }
+            case EXPR_BINARY: {
+                const char* op = expr->binary.op.lexeme;
+    
+                if (strcmp(op, "=") == 0) {
+                    if (expr->binary.left->type != EXPR_VARIABLE) {
+                        fprintf(stderr, "Invalid assignment target\n");
+                        exit(1);
+                    }
+                    compile_expr(expr->binary.right);
+                    int var_id = expr->binary.left->variable.name.lexeme[0];
+                    emit(BC_SET_VAR, var_id);
+                    return;
+                }
+    
+                compile_expr(expr->binary.left);
+                compile_expr(expr->binary.right);
+    
+                if (strcmp(op, "+") == 0) emit(BC_ADD, 0);
+                else if (strcmp(op, "-") == 0) emit(BC_SUB, 0);
+                else if (strcmp(op, "*") == 0) emit(BC_MUL, 0);
+                else if (strcmp(op, "/") == 0) emit(BC_DIV, 0);
+                else if (strcmp(op, "==") == 0) emit(BC_EQUAL, 0);
+                else if (strcmp(op, "!=") == 0) emit(BC_NOT_EQUAL, 0);
+                else if (strcmp(op, "<") == 0) emit(BC_LESS, 0);
+                else if (strcmp(op, "<=") == 0) emit(BC_LESS_EQUAL, 0);
+                else if (strcmp(op, ">") == 0) emit(BC_GREATER, 0);
+                else if (strcmp(op, ">=") == 0) emit(BC_GREATER_EQUAL, 0);
+                else {
+                    fprintf(stderr, "Unknown binary operator: %s\n", op);
+                    exit(1);
+                }
+                break;
+            }
+            default:
+                fprintf(stderr, "Unknown expression type\n");
+                exit(1);
+        }
+    }
+    
+    static void compile_stmt(Stmt* stmt) {
+        switch (stmt->type) {
+            case STMT_LET: {
+                compile_expr(stmt->let.initializer);
+                int var_id = stmt->let.name.lexeme[0];
+                emit(BC_SET_VAR, var_id);
+                break;
+            }
+            case STMT_YAP: {
+                compile_expr(stmt->yap.expression);
+                emit(BC_PRINT, 0);
+                break;
+            }
+            case STMT_EXPR: {
+                compile_expr(stmt->expr.expression);
+                break;
+            }
+            case STMT_IF: {
+                compile_expr(stmt->if_stmt.condition);
+                int jump_if_false = bytecode->count;
+                emit(BC_JUMP_IF_FALSE, 0); // Placeholder
+    
+                compile_stmt(stmt->if_stmt.then_branch);
+    
+                if (stmt->if_stmt.else_branch) {
+                    int jump_end = bytecode->count;
+                    emit(BC_JUMP, 0); // Placeholder
+                    bytecode->instructions[jump_if_false].operand = bytecode->count;
+                    compile_stmt(stmt->if_stmt.else_branch);
+                    bytecode->instructions[jump_end].operand = bytecode->count;
+                } else {
+                    bytecode->instructions[jump_if_false].operand = bytecode->count;
+                }
+                break;
+            }
+            case STMT_WHILE: {
+                int loop_start = bytecode->count;
+                compile_expr(stmt->while_stmt.condition);
+                int jump_out = bytecode->count;
+                emit(BC_JUMP_IF_FALSE, 0); // Placeholder
+    
+                compile_stmt(stmt->while_stmt.body);
+    
+                emit(BC_JUMP, loop_start);
+                bytecode->instructions[jump_out].operand = bytecode->count;
+                break;
+            }
+            case STMT_BLOCK: {
+                for (int i = 0; i < stmt->block.count; i++) {
+                    compile_stmt(stmt->block.statements[i]);
+                }
+                break;
+            }
+            default:
+                fprintf(stderr, "Unhandled statement type\n");
+                exit(1);
+        }
+    }
+    
+    Bytecode* compile(Stmt** stmts, int stmt_count) {
+        bytecode = malloc(sizeof(Bytecode));
+        bytecode->instructions = malloc(sizeof(Instruction) * 128);
+        bytecode->capacity = 128;
+        bytecode->count = 0;
+    
+        bytecode->constants = malloc(sizeof(int) * 128);
+        bytecode->const_capacity = 128;
+        bytecode->const_count = 0;
+    
+        for (int i = 0; i < stmt_count; i++) {
+            compile_stmt(stmts[i]);
+        }
+    
+        emit(BC_HALT, 0);
+        return bytecode;
+    }
+    
+    void free_bytecode(Bytecode* bc) {
+        free(bc->instructions);
+        free(bc->constants);
+        free(bc);
+    }
+
+===== ./compiler.h =====
+    // compiler.h
+    #ifndef COMPILER_H
+    #define COMPILER_H
+    
+    #include "parser.h"
+    
+    // Bytecode instruction set
+    typedef enum {
+        BC_CONST,
+        BC_ADD,
+        BC_SUB,
+        BC_MUL,
+        BC_DIV,
+        BC_PRINT,
+        BC_LOAD_VAR,
+        BC_SET_VAR,
+        BC_STORE_VAR,      
+        BC_EQUAL,
+        BC_NOT_EQUAL,
+        BC_LESS,
+        BC_LESS_EQUAL,
+        BC_GREATER,
+        BC_GREATER_EQUAL,
+        BC_JUMP_IF_FALSE,
+        BC_JUMP,
+        BC_LOOP,
+        BC_POP,            
+        BC_HALT
+    } OpCode;
+    
+    
+    // Represents a bytecode instruction
+    typedef struct {
+        OpCode opcode;
+        int operand; // e.g., index into constants table or jump offset
+    } Instruction;
+    
+    // Represents compiled bytecode
+    typedef struct {
+        Instruction* instructions;
+        int count;
+        int capacity;
+        int* constants;  // For literal numbers
+        int const_count;
+        int const_capacity;
+    } Bytecode;
+    
+    Bytecode* compile(Stmt** stmts, int stmt_count);
+    void free_bytecode(Bytecode* bytecode);
+    
+    #endif
+
+===== ./interpreter.c =====
+    #include <stdio.h>
+    #include <stdlib.h>
+    #include <string.h>
+    #include "interpreter.h"
+    
+    // Simple variable storage
+    typedef struct {
+        const char* name;
+        int value;
+    } Variable;
+    
+    #define MAX_VARS 128
+    static Variable vars[MAX_VARS];
+    static int var_count = 0;
+    
+    int lookup_variable(const char* name) {
+        for (int i = 0; i < var_count; i++) {
+            if (strcmp(vars[i].name, name) == 0) {
+                return vars[i].value;
+            }
+        }
+        fprintf(stderr, "Undefined variable: %s\n", name);
+        exit(1);
+    }
+    
+    void assign_variable(const char* name, int value) {
+        for (int i = 0; i < var_count; i++) {
+            if (strcmp(vars[i].name, name) == 0) {
+                vars[i].value = value;
+                return;
+            }
+        }
+        vars[var_count].name = strdup(name);
+        vars[var_count].value = value;
+        var_count++;
+    }
+    
+    // ------------------
+    // Expression evaluation
+    // ------------------
+    int eval_expr(Expr* expr) {
+        switch (expr->type) {
+            case EXPR_LITERAL:
+                return atoi(expr->literal.value.lexeme);
+    
+            case EXPR_VARIABLE:
+                return lookup_variable(expr->variable.name.lexeme);
+    
+                case EXPR_BINARY: {
+                    int left_value = eval_expr(expr->binary.left);
+                    int right_value = eval_expr(expr->binary.right);
+                    const char* op = expr->binary.op.lexeme;
+                
+                    if (strcmp(op, "+") == 0) return left_value + right_value;
+                    if (strcmp(op, "-") == 0) return left_value - right_value;
+                    if (strcmp(op, "*") == 0) return left_value * right_value;
+                    if (strcmp(op, "/") == 0) return left_value / right_value;
+                    if (strcmp(op, "==") == 0) return left_value == right_value;
+                    if (strcmp(op, "!=") == 0) return left_value != right_value;
+                    if (strcmp(op, "<") == 0) return left_value < right_value;
+                    if (strcmp(op, "<=") == 0) return left_value <= right_value;
+                    if (strcmp(op, ">") == 0) return left_value > right_value;
+                    if (strcmp(op, ">=") == 0) return left_value >= right_value;
+                
+                    if (strcmp(op, "=") == 0) {
+                        if (expr->binary.left->type != EXPR_VARIABLE) {
+                            fprintf(stderr, "Invalid assignment target\n");
+                            exit(1);
+                        }
+                        const char* name = expr->binary.left->variable.name.lexeme;
+                        assign_variable(name, right_value);
+                        return right_value;
+                    }
+                
+                    fprintf(stderr, "Unknown binary operator: %s\n", op);
+                    exit(1);
+                }
+                
+    
+            default:
+                fprintf(stderr, "Unknown expression type\n");
+                exit(1);
+        }
+    }
+    
+    // ------------------
+    // Statement execution
+    // ------------------
+    void exec_stmt(Stmt* stmt) {
+        if (!stmt) return;
+    
+        switch (stmt->type) {
+            case STMT_LET: {
+                const char* name = stmt->let.name.lexeme;
+                int value = eval_expr(stmt->let.initializer);
+                assign_variable(name, value);
+                printf("Assigned variable %s = %d\n", name, value);  // Debugging output
+                break;
+            }
+    
+            case STMT_YAP: {
+                int value = eval_expr(stmt->yap.expression);
+                printf("Yap output: %d\n", value);  // Debugging output
+                break;
+            }
+    
+            case STMT_EXPR: {
+                Expr* expr = stmt->expr.expression;
+    
+                if (expr->type == EXPR_BINARY &&
+                    strcmp(expr->binary.op.lexeme, "=") == 0 &&
+                    expr->binary.left->type == EXPR_VARIABLE) {
+    
+                    const char* name = expr->binary.left->variable.name.lexeme;
+                    int value = eval_expr(expr->binary.right);
+                    assign_variable(name, value);
+                    printf("Re-assigned variable %s = %d\n", name, value);  // Debugging output
+                } else {
+                    eval_expr(expr);  // Regular expression
+                }
+                break;
+            }
+    
+            case STMT_IF: {
+                int condition = eval_expr(stmt->if_stmt.condition);
+                printf("If condition: %d\n", condition);  // Debugging output
+                if (condition) {
+                    exec_stmt(stmt->if_stmt.then_branch);
+                } else if (stmt->if_stmt.else_branch) {
+                    exec_stmt(stmt->if_stmt.else_branch);
+                }
+                break;
+            }
+    
+            case STMT_WHILE: {
+                while (eval_expr(stmt->while_stmt.condition)) {
+                    printf("While condition true\n");  // Debugging output
+                    exec_stmt(stmt->while_stmt.body);
+                }
+                break;
+            }
+    
+            case STMT_BLOCK: {
+                for (int i = 0; i < stmt->block.count; i++) {
+                    exec_stmt(stmt->block.statements[i]);
+                }
+                break;
+            }
+    
+            default:
+                printf("Unhandled statement type\n");
+        }
+    }
+    
+    
+    
+    void interpret(Stmt** stmts, int count) {
+        for (int i = 0; i < count; i++) {
+            exec_stmt(stmts[i]);
+        }
+    }
+    
+
+===== ./interpreter.h =====
+    #ifndef INTERPRETER_H
+    #define INTERPRETER_H
+    
+    #include "parser.h"
+    
+    void interpret(Stmt** stmts, int count);
+    
+    #endif
+
+===== ./jminus.exe =====
+    MZ       ÿÿ  ¸       @                                   €   º ´	Í!¸LÍ!This program cannot be run in DOS mode.
+    $       PE  d† ˜h  l  ğ & , ¬   4   "  ğ        @                       ğ    ÍÒ  `                                             @ ¤           ğ             ` Œ                            Ù  (                   HB                           .text    ª      ¬                    `.data   @   À      ²              @  À.rdata  è   Ğ      ´              @  @.pdata     ğ      È              @  @.xdata  Ä         Ğ              @  @.bss    @                         €  À.idata  ¤   @  
+       Ø              @  @.tls        P     â              @  À.reloc  Œ    `     ä              @  B/4      P    p     æ              @  B/19     d   €     è              @  B/31     ¯          ú              @  B/45     ¤    °     ü              @  B/57     H    À     ş              @  B/70     ¥    Ğ                   @  B/81     ş   à                  @  B                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        Ãff.„     @ Hƒì(H‹UĞ  1ÉÇ    H‹VĞ  Ç    H‹YĞ  Ç    H‹ŒÏ  f8MZuHcP<HĞ8PE  tfH‹ÿÏ  ‰¥ÿ  ‹ …ÀtC¹   èá§  è„¡  H‹½Ğ  ‹‰è„¡  H‹Ğ  ‹‰è”<  H‹Ï  ƒ8tP1ÀHƒÄ(Ã¹   è§  ë»@ ·PfútEfúuˆƒ¸„   †{ÿÿÿ‹ø   1É…Ò•Áéiÿÿÿ€    H‹aĞ  è¬C  1ÀHƒÄ(ÃD  ƒxt†@ÿÿÿD‹€è   1ÉE…À•Áé,ÿÿÿfHƒì8H‹5Ğ  LÖş  H×ş  HØş  ‹ ‰¬ş  H‹ÑÏ  D‹H›ş  H‰D$ èÕ¦  HƒÄ8Ã€    ATUWVSHƒì H‹Ï  eH‹%0   H‹=ç0 H‹pëf„     H9Æ„g  ¹è  ÿ×1ÀğH±3uçH‹5ğÎ  1ÿ‹ƒø„Z  ‹…À„¹  Çş     ‹ƒø„P  …ÿ„i  H‹õÍ  H‹ H…ÀtE1Àº   1ÉÿĞèÜ>  H‹%Ï  ÿO0 H‹hÎ  HÁıÿÿH‰è¹   èÄ<  ‹Öı  {HcÿHÁçH‰ùèÄ¦  …ÛH‹-³ı  I‰ÄJ  Hƒï1Û@ H‹L èæ¦  HpH‰ñè’¦  I‰ğI‰H‹T H‰ÁHƒÃè‚¦  H9ßuÍLçHÇ    L‰%\ı  èG:  H‹@Í  L‹Aı  ‹Kı  H‹ L‰ H‹6ı  èD  ‹ı  ‰ı  …É„Å   ‹ÿü  …ÒtsHƒÄ [^_]A\Ã„     H‹5™Í  ¿   ‹ƒø…¦şÿÿ¹   è'¥  ‹ƒø…°şÿÿH‹Í  H‹†Í  è!¥  …ÿÇ   …—şÿÿ1ÀH‡éşÿÿf„     èë¤  ‹…ü  HƒÄ [^_]A\Ãf.„     H‹iÍ  Ç   H‹LÍ  èÇ¤  é3şÿÿfH‰Çéîşÿÿ‰Áè1E  Hƒì(H‹…Ì  Ç    èšıÿÿHƒÄ(Ã Hƒì(H‹eÌ  Ç     èzıÿÿHƒÄ(Ã Hƒì(èw¤  HƒøÀHƒÄ(ÃH	   éÔÿÿÿ@ ÃUSHƒì8Hl$0H‰M H‰U(L‰E0L‰M8HE(H‰EğH‹]ğ¹   H‹­¬  ÿĞH‰ÁH‹E I‰ØH‰ÂèÉH  ‰Eü‹EüHƒÄ8[]ÃUH‰åHƒì@H‰MH‹EHE»  H‰Áè¤  H‰EøHƒ}ø uH.»  H‰Áèc¤  ¹   èD  H‹EøA¸   º    H‰Áèò£  H‹EøH‰Áèî£  ‰EôH‹EøH‰Áè7¤  ‹EôƒÀH˜H‰Áèÿ£  H‰EèHƒ}è uHÜº  H‰Áèı£  ¹   è³C  ‹EôHcĞH‹MøH‹EèI‰ÉI‰Ğº   H‰Áèr£  H‰EàH‹UèH‹EàHĞÆ  H‹EøH‰Áè4£  H‹EèHƒÄ@]ÃUH‰åHƒì0H‰MH‹EH‰ÁèÂ£  ‰Eüë‹EüH˜HPÿH‹EHĞÆ  ƒmüƒ}ü ~\‹EüH˜HPÿH‹EHĞ¶ < tÌ‹EüH˜HPÿH‹EHĞ¶ <
+    tµ‹EüH˜HPÿH‹EHĞ¶ <t‹EüH˜HPÿH‹EHĞ¶ <	t‡HƒÄ0]ÃUH‰åHƒìP‰MH‰UèÉ6  Hã¹  H‰Eøƒ}~H‹EH‹@H‰EøH‹EøH‰Áè4şÿÿH‰EğH‹EğH‰ÁèÿÿÿH‹EğH‰ÂH²¹  H‰ÁèºıÿÿHEÔH‹MğH‰ÂèÑ  H‰Eè‹UÔHMĞH‹EèI‰ÈH‰Áèø  H‰Eà‹UĞH‹EàH‰Áè0  H‰EØH‹EØH‰Áè2  ‹UÔH‹EèH‰Áèú  H‹EØH‰Áè·0  H‹EğH‰ÁèŞ¡  ¸    HƒÄP]ÃUSHƒì8Hl$0H‰M H‰U(L‰E0L‰M8HE(H‰EğH‹]ğ¹   H‹İ©  ÿĞH‰ÁH‹E I‰ØH‰ÂèùE  ‰Eü‹EüHƒÄ8[]ÃUH‰åHƒì0H‰MÇEü    ëC‹EüH˜HÁàH‰ÂHd¨  H‹H‹EH‰Áè´¡  …Àu‹EüH˜HÁàH‰ÂHE¨  ‹ë%ƒEü‹EüH˜HÁàH‰ÂH!¨  H‹H…Àu¡¸   HƒÄ0]ÃUH‰åHƒì@H‰M‰UL‰E D‰M(‹E‰Eà‹E(ƒÀH˜H‰Áè¡  H‰Eè‹E(HcÈH‹EèH‹U I‰ÈH‰ÁèC¡  H‹Uè‹E(H˜HĞÆ  ‹E0‰EğH‹EH‹UàH‰H‹UèH‰PH‹UğH‰PH‹EHƒÄ@]ÃUSHì˜   H¬$   H‰M H‰U(¹ `  è   H‰EàÇEü    ÇEø   H‹E H‰EØH‹E H‰Eğé  H‹EğH‰EØH‹Eğ¶ ¾À‰ÁH‹ì* ÿĞ…ÀtH‹Eğ¶ <
+    uƒEøHƒEğéÌ
+      H‹Eğ¶ ¾À‰ÁH‹²* ÿĞ…ÀuH‹Eğ¶ <_…ò   ëHƒEğH‹Eğ¶ ¾À‰ÁH‹{* ÿĞ…ÀuâH‹Eğ¶ <_t×H‹EğH+EØ‰EÔ‹EÔƒÀH˜H‰Áè¿Ÿ  H‰EÈ‹EÔHcÈH‹UØH‹EÈI‰ÈH‰ÁèúŸ  ‹EÔH˜H‹UÈHĞÆ  H‹EÈH‰ÁèÓıÿÿ‰EÄH‹EÈH‰Áè8Ÿ  H‹EğH+EØA‰Á‹EüP‰UüHcĞH‰ĞHÀHĞHÁàH‰ÂH‹EàHHE L‹EØ‹UÄ‹Mø‰L$ H‰ÁèúıÿÿH‹E H‰H‹E¨H‰CH‹E°H‰Cé²	  H‹Eğ¶ ¾Àƒè0ƒø	‡†   ëHƒEğH‹Eğ¶ ¾Àƒè0ƒø	véH‹EğH+EØA‰À‹EüP‰UüHcĞH‰ĞHÀHĞHÁàH‰ÂH‹EàHHE H‹MØ‹Uø‰T$ E‰ÁI‰Èº   H‰Áè^ıÿÿH‹E H‰H‹E¨H‰CH‹E°H‰Cé	  H‹Eğ¶ </u5H‹EğHƒÀ¶ </u&ëHƒEğH‹Eğ¶ „À„å  H‹Eğ¶ <
+    uáéÕ  H‹Eğ¶ ¾Àƒè!ƒø\‡ü  ‰ÀH…    H¶  ‹H˜H ¶  HĞÿàH‹MğHAH‰Eğ‹EüP‰UüHcĞH‰ĞHÀHĞHÁàH‰ÂH‹EàHHE ‹Uø‰T$ A¹   I‰Èº   H‰ÁèyüÿÿH‹E H‰H‹E¨H‰CH‹E°H‰Cé1  H‹MğHAH‰Eğ‹EüP‰UüHcĞH‰ĞHÀHĞHÁàH‰ÂH‹EàHHE ‹Uø‰T$ A¹   I‰Èº   H‰ÁèüÿÿH‹E H‰H‹E¨H‰CH‹E°H‰CéÄ  H‹MğHAH‰Eğ‹EüP‰UüHcĞH‰ĞHÀHĞHÁàH‰ÂH‹EàHHE ‹Uø‰T$ A¹   I‰Èº   H‰ÁèŸûÿÿH‹E H‰H‹E¨H‰CH‹E°H‰CéW  H‹MğHAH‰Eğ‹EüP‰UüHcĞH‰ĞHÀHĞHÁàH‰ÂH‹EàHHE ‹Uø‰T$ A¹   I‰Èº   H‰Áè2ûÿÿH‹E H‰H‹E¨H‰CH‹E°H‰Céê  H‹EğHƒÀ¶ <=uj‹EüP‰UüHcĞH‰ĞHÀHĞHÁàH‰ÂH‹EàHHE H‹Mğ‹Uø‰T$ A¹   I‰Èº   H‰Áè¾úÿÿH‹E H‰H‹E¨H‰CH‹E°H‰CHƒEğéq  H‹MğHAH‰Eğ‹EüP‰UüHcĞH‰ĞHÀHĞHÁàH‰ÂH‹EàHHE ‹Uø‰T$ A¹   I‰Èº
+       H‰ÁèLúÿÿH‹E H‰H‹E¨H‰CH‹E°H‰Cé  H‹EğHƒÀ¶ <=uj‹EüP‰UüHcĞH‰ĞHÀHĞHÁàH‰ÂH‹EàHHE H‹Mğ‹Uø‰T$ A¹   I‰Èº   H‰ÁèØùÿÿH‹E H‰H‹E¨H‰CH‹E°H‰CHƒEğé‹  H‹MğHAH‰Eğ‹EüP‰UüHcĞH‰ĞHÀHĞHÁàH‰ÂH‹EàHHE ‹Uø‰T$ A¹   I‰Èº   H‰ÁèfùÿÿH‹E H‰H‹E¨H‰CH‹E°H‰Cé  H‹EğHƒÀ¶ <=uj‹EüP‰UüHcĞH‰ĞHÀHĞHÁàH‰ÂH‹EàHHE H‹Mğ‹Uø‰T$ A¹   I‰Èº   H‰ÁèòøÿÿH‹E H‰H‹E¨H‰CH‹E°H‰CHƒEğé¥  H‹MğHAH‰Eğ‹EüP‰UüHcĞH‰ĞHÀHĞHÁàH‰ÂH‹EàHHE ‹Uø‰T$ A¹   I‰Èº   H‰Áè€øÿÿH‹E H‰H‹E¨H‰CH‹E°H‰Cé8  H‹EğHƒÀ¶ <=uj‹EüP‰UüHcĞH‰ĞHÀHĞHÁàH‰ÂH‹EàHHE H‹Mğ‹Uø‰T$ A¹   I‰Èº   H‰ÁèøÿÿH‹E H‰H‹E¨H‰CH‹E°H‰CHƒEğé¿  H‹MğHAH‰Eğ‹EüP‰UüHcĞH‰ĞHÀHĞHÁàH‰ÂH‹EàHHE ‹Uø‰T$ A¹   I‰Èº   H‰Áèš÷ÿÿH‹E H‰H‹E¨H‰CH‹E°H‰CéR  H‹MğHAH‰Eğ‹EüP‰UüHcĞH‰ĞHÀHĞHÁàH‰ÂH‹EàHHE ‹Uø‰T$ A¹   I‰Èº   H‰Áè-÷ÿÿH‹E H‰H‹E¨H‰CH‹E°H‰Céå  H‹MğHAH‰Eğ‹EüP‰UüHcĞH‰ĞHÀHĞHÁàH‰ÂH‹EàHHE ‹Uø‰T$ A¹   I‰Èº   H‰ÁèÀöÿÿH‹E H‰H‹E¨H‰CH‹E°H‰Céx  H‹MğHAH‰Eğ‹EüP‰UüHcĞH‰ĞHÀHĞHÁàH‰ÂH‹EàHHE ‹Uø‰T$ A¹   I‰Èº   H‰ÁèSöÿÿH‹E H‰H‹E¨H‰CH‹E°H‰Cé  H‹MğHAH‰Eğ‹EüP‰UüHcĞH‰ĞHÀHĞHÁàH‰ÂH‹EàHHE ‹Uø‰T$ A¹   I‰Èº   H‰ÁèæõÿÿH‹E H‰H‹E¨H‰CH‹E°H‰Cé  H‹MğHAH‰Eğ‹EüP‰UüHcĞH‰ĞHÀHĞHÁàH‰ÂH‹EàHHE ‹Uø‰T$ A¹   I‰Èº   H‰ÁèyõÿÿH‹E H‰H‹E¨H‰CH‹E°H‰Cé1  H‹MğHAH‰Eğ‹EüP‰UüHcĞH‰ĞHÀHĞHÁàH‰ÂH‹EàHHE ‹Uø‰T$ A¹   I‰Èº   H‰ÁèõÿÿH‹E H‰H‹E¨H‰CH‹E°H‰CéÄ   ‹7ñ  ƒøN‹,ñ  H‹Eğ¶ HcÒHÕ    Hí  ˆ‹
+    ñ  H˜HÅ    Hıì  ‹Mø‰‹íğ  ƒÀ‰äğ  H‹MğHAH‰Eğ‹EüP‰UüHcĞH‰ĞHÀHĞHÁàH‰ÂH‹EàHHE ‹Uø‰T$ A¹   I‰Èº   H‰ÁèFôÿÿH‹E H‰H‹E¨H‰CH‹E°H‰CëH‹Eğ¶ „ÀtH‹Eğ¶ <ÿ…àôÿÿ‹EüP‰UüHcĞH‰ĞHÀHĞHÁàH‰ÂH‹EàHHE H‹Mğ‹Uø‰T$ A¹    I‰Èº   H‰ÁèÉóÿÿH‹E H‰H‹E¨H‰CH‹E°H‰CH‹E(‹Uü‰‹ğï  …À†   H1¬  H‰Áè¹òÿÿÇEì    ëJ‹EìH˜HÅ    HÀë  ‹‹EìH˜HÅ    H¥ë  ¶¾ÀA‰È‰ÂH"¬  H‰ÁèjòÿÿƒEì‹€ï  9Eì|«H4¬  H‰ÁèLòÿÿ¹   è"4  H‹EàHÄ˜   []ÃUH‰åHƒì0H‰M‰UÇEü    ë-‹EüHcĞH‰ĞHÀHĞHÁàH‰ÂH‹EHĞH‹@H‰Áè»“  ƒEü‹Eü;E|ËH‹EH‰Áè£“  HƒÄ0]ÃUH‰å‰Mƒ}‡a  ‹EH…    Hõ­  ‹H˜Hé­  HĞÿàH­  é9  H	­  é-  H ­  é!  Hø¬  é  Hó¬  é	  Hê¬  éı   Hä¬  éñ   Hİ¬  éå   HÜ¬  éÙ   HÔ¬  éÍ   HÎ¬  éÁ   HÉ¬  éµ   HÂ¬  é©   H¼¬  é   Hµ¬  é‘   H¯¬  é…   H©¬  ë|H¥¬  ësH§¬  ëjH£¬  ëaH¥¬  ëXH¤¬  ëOH©¬  ëFH§¬  ë=H¥¬  ë4H£¬  ë+H¡¬  ë"H¬  ëHŸ¬  ëHš¬  ëH™¬  ]ÃUVSHƒì Hl$ H‰ËH‹s‹‰ÁèişÿÿH‰Â‹CI‰ñI‰Ğ‰ÂHä¬  H‰Áè ğÿÿHƒÄ [^]ÃUH‰åHƒì0H‰MH‰UL‰E L‰M(HE H‰EğH‹MğH‹UH‹EI‰ÈH‰Áè6  ‰Eü‹EüHƒÄ0]ÃUSHƒì8Hl$0H‰M H‰U(L‰E0L‰M8HE(H‰EğH‹]ğ¹   H‹ª™  ÿĞH‰ÁH‹E I‰ØH‰ÂèÆ5  ‰Eü‹EüHƒÄ8[]ÃUH‰åH‰MH‹ªì  ‹¬ì  HcĞH‰ĞHÀHĞHÁàHH‹EH‹
+    H‰H‹JH‰HH‹RH‰PH‹E]ÃUH‰åH‰MH‹aì  ‹cì  HcĞH‰ĞHÀHĞHÁàHƒèHH‹EH‹
+    H‰H‹JH‰HH‹RH‰PH‹E]ÃUH‰åH‹ì  ‹ì  HcĞH‰ĞHÀHĞHÁàHÈ‹ ƒø”À¶À]ÃUH‰åHƒì H‰Mè¾ÿÿÿ…Àu‹ßë  ƒÀ‰Öë  H‹EH‰ÁèRÿÿÿH‹EHƒÄ ]ÃUH‰åHƒì ‰Mè…ÿÿÿ…Àu.H‹ë  ‹Ÿë  HcĞH‰ĞHÀHĞHÁàHÈ‹ 9Eu¸   ë¸    HƒÄ ]ÃUH‰åHƒì@‰M‹E‰Áèÿÿÿ…ÀtHEàH‰ÁèTÿÿÿ¸   ë¸    HƒÄ@]ÃUH‰åHƒì0H‰MH‹EH‰Áèä  H‰EøHƒ}ø u*¹   H‹Õ—  ÿĞH‰ÁH‰ª  H‰Âè¡ıÿÿ¹   è‡/  H‹UH‹EøI‰Ğº    H‰Áè§  H‹EøHƒÄ0]ÃUSHì˜   H¬$   ¹   è?ÿÿÿ…ÀtIHE°H‰Áè*şÿÿ¹0   è\ÿÿÿH‰EèH‹EèÇ     H‹EèH‹U°H‰PH‹U¸H‰PH‹UÀH‰PH‹Eèéé   ¹   èèşÿÿ…ÀtIHEH‰ÁèÓıÿÿ¹0   èÿÿÿH‰EğH‹EğÇ    H‹EğH‹UH‰PH‹U˜H‰PH‹U H‰PH‹Eğé’   ¹   è‘şÿÿ…ÀtGè¬  H‰Eø¹   èzşÿÿ…Àu*¹   H‹¥–  ÿĞH‰ÁHy©  H‰Âèqüÿÿ¹   èW.  H‹Eøë=HEĞH‰ÁèìüÿÿH‹]Ø¹   H‹e–  ÿĞH‰ÁI‰ØHU©  H‰Âè.üÿÿ¹   è.  HÄ˜   []ÃUH‰åHì°   H‰MH‰UD‰E H‹EÿĞH‰Eøéò   HEÀH‰Áèüÿÿ‹EÀ‰EìÇEô    ÇEğ    ë(‹EğH˜H…    H‹EHĞ‹ 9Eìu	ÇEô   ëƒEğ‹Eğ;E |Ğƒ}ô „¥   HE H‰ÁèêüÿÿH‹EÿĞH‰EàH‹EøH‰…pÿÿÿH‹E H‰…xÿÿÿH‹E¨H‰E€H‹E°H‰EˆH‹EàH‰E¹0   èfıÿÿH‰EØH‹EØÇ    H‹EØH‹•pÿÿÿH‰PH‹•xÿÿÿH‰PH‹U€H‰PH‹UˆH‰P H‹UH‰P(H‹EØH‰Eøè*üÿÿ…À„ÿÿÿëH‹EøHÄ°   ]ÃUH‰åHƒì0ÇEø   ÇEü   HEøA¸   H‰ÂHFıÿÿH‰Áè™şÿÿHƒÄ0]ÃUH‰åHƒì0ÇEø   ÇEü   HEøA¸   H‰ÂHÿÿÿH‰ÁèaşÿÿHƒÄ0]ÃUH‰åHƒì0ÇEğ   ÇEô   ÇEø   ÇEü   HEğA¸   H‰ÂHÿÿÿH‰ÁèşÿÿHƒÄ0]ÃUH‰åHƒì0ÇEø   ÇEü   HEøA¸   H‰ÂHÿÿÿH‰ÁèãıÿÿHƒÄ0]ÃUH‰åHƒÄ€è»ÿÿÿH‰Eø¹
+       èÁûÿÿ…À„¼   HEĞH‰Áè¨úÿÿèÌÿÿÿH‰EğH‹Eø‹ ƒøt*¹   H‹È“  ÿĞH‰ÁHÑ¦  H‰Âè”ùÿÿ¹   èz+  H‹EøH‰E H‹EĞH‰E¨H‹EØH‰E°H‹EàH‰E¸H‹EğH‰EÀ¹0   ètûÿÿH‰EèH‹EèÇ    H‹EèH‹U H‰PH‹U¨H‰PH‹U°H‰PH‹U¸H‰P H‹UÀH‰P(H‹EèëH‹EøHƒì€]ÃUH‰åHƒìp¹   èáúÿÿ…Àu*¹   H‹“  ÿĞH‰ÁH8¦  H‰ÂèØøÿÿ¹   è¾*  HEĞH‰Áè¢ùÿÿ¹
+       èúÿÿ…Àu*¹   H‹È’  ÿĞH‰ÁH¦  H‰Âè”øÿÿ¹   èz*  èşÿÿH‰Eø¹   è\úÿÿ…Àu*¹   H‹‡’  ÿĞH‰ÁH¦  H‰ÂèSøÿÿ¹   è9*  H‹EĞH‰E°H‹EØH‰E¸H‹EàH‰EÀH‹EøH‰EÈ¹(   è;úÿÿH‰EğH‹EğÇ    H‹EğH‹U°H‰PH‹U¸H‰PH‹UÀH‰PH‹UÈH‰P H‹EğHƒÄp]ÃUH‰åHƒì@¹   è¶ùÿÿ…Àu*¹   H‹á‘  ÿĞH‰ÁH¥  H‰Âè­÷ÿÿ¹   è“)  è§ıÿÿH‰Eø¹   èuùÿÿ…Àu*¹   H‹ ‘  ÿĞH‰ÁH\¥  H‰Âèl÷ÿÿ¹   èR)  ¹   è=ùÿÿ…Àu*¹   H‹h‘  ÿĞH‰ÁHL¥  H‰Âè4÷ÿÿ¹   è)  H‹EøH‰Eè¹(   è4ùÿÿH‰EğH‹EğÇ    H‹EğH‹UèH‰PH‹EğHƒÄ@]ÃUH‰åHƒì`¹   èÇøÿÿ…Àu*¹   H‹ò  ÿĞH‰ÁHø¤  H‰Âè¾öÿÿ¹   è¤(  è¸üÿÿH‰Eğ¹   è†øÿÿ…Àu*¹   H‹±  ÿĞH‰ÁHĞ¤  H‰Âè}öÿÿ¹   èc(  è"  H‰EèHÇEø    ¹   è=øÿÿ…Àt	è  H‰EøH‹EğH‰EÀH‹EèH‰EÈH‹EøH‰EĞ¹(   èEøÿÿH‰EàH‹EàÇ    H‹EàH‹UÀH‰PH‹UÈH‰PH‹UĞH‰PH‹EàHƒÄ`]ÃUH‰åHƒìP¹   èÈ÷ÿÿ…Àu*¹   H‹ó  ÿĞH‰ÁH0¤  H‰Âè¿õÿÿ¹   è¥'  è¹ûÿÿH‰Eø¹   è‡÷ÿÿ…Àu*¹   H‹²  ÿĞH‰ÁH¤  H‰Âè~õÿÿ¹   èd'  è#  H‰EğH‹EøH‰EĞH‹EğH‰EØ¹(   èm÷ÿÿH‰EèH‹EèÇ    H‹MèH‹EĞH‹UØH‰AH‰QH‹EèHƒÄP]ÃUSHƒìXHl$P¹   è,÷ÿÿH‰EğÇEü    ë#‹EüP‰UüH˜HÅ    H‹EğHè—   H‰¹   ènöÿÿ…Àu	èúõÿÿ…ÀtÆ¹   è¤öÿÿ…Àu*¹   H‹Ï  ÿĞH‰ÁHO£  H‰Âè›ôÿÿ¹   è&  H‹EğH‰EĞ‹Eü‰EØ¹(   è•öÿÿH‰EèH‹EèÇ    H‹MèH‹EĞH‹UØH‰AH‰QH‹EèHƒÄX[]ÃUH‰åHƒì@¹    èöÿÿ…Àt
+    è#ûÿÿéÎ   ¹   èöÿÿ…Àt
+    è6üÿÿé¶   ¹   èïõÿÿ…Àt
+    èıÿÿé   ¹   è×õÿÿ…Àt
+    èôıÿÿé†   ¹   è¿õÿÿ…Àtè¬şÿÿëqèÓùÿÿH‰Eø¹   è¡õÿÿ…Àu*¹   H‹Ì  ÿĞH‰ÁHh¢  H‰Âè˜óÿÿ¹   è~%  H‹EøH‰Eè¹(   è˜õÿÿH‰EğH‹EğÇ     H‹EğH‹UèH‰PH‹EğHƒÄ@]ÃUSHƒì8Hl$0H‰M ‰U(L‰E0H‹E H‰‡à  Ç…à      ‹E(‰€à  ¹   è6õÿÿH‰EğÇEü    ë#‹EüP‰UüH˜HÅ    H‹EğHè¡şÿÿH‰èôÿÿ…ÀtÔH‹E0‹Uü‰H‹EğHƒÄ8[]ÃUH‰åHƒì0‰MÇEü    ëH™¡  H‰ÁèíòÿÿƒEü‹Eü;E|åHƒÄ0]ÃUH‰åHƒì0H‰M‰UHƒ} „G  H‹E‹ ƒø„É   ƒø‡0  ƒøtiƒø‡"  …Àt
+    ƒøt.é  ‹E‰ÁèqÿÿÿH‹EH‹@H‰ÂH¡  H‰Áègòÿÿéë   ‹E‰ÁèHÿÿÿH‹EH‹@H‰ÂHú   H‰Áè>òÿÿéÂ   ‹E‰ÁèÿÿÿH‹EH‹@H‰ÂHß   H‰Áèòÿÿ‹EPH‹EH‹@H‰Áè&ÿÿÿ‹EPH‹EH‹@(H‰Áèÿÿÿëp‹E‰ÁèÍşÿÿH¤   H‰ÁèÎñÿÿ‹EPH‹EH‹@H‰ÁèßşÿÿÇEü    ë)‹EPH‹EH‹H‹EüH˜HÁàHÈH‹ H‰Áè±şÿÿƒEüH‹E‹@9Eü|ËëHƒÄ0]ÃUH‰åHƒì0H‰M‰UHƒ} „u  H‹E‹ ƒø‡j  ‰ÀH…    Hp   ‹H˜Hd   HĞÿà‹E‰ÁèşÿÿHêŸ  H‰Áèñÿÿ‹EPH‹EH‹@H‰Áèşÿÿé  ‹E‰ÁèØıÿÿH‹EH‹@H‰ÂH¶Ÿ  H‰ÁèÎğÿÿ‹EPH‹EH‹@ H‰ÁèßıÿÿéÕ  ‹E‰Áè™ıÿÿHŸ  H‰Áèšğÿÿ‹EPH‹EH‹@H‰Áè«ıÿÿé¡  ‹E‰ÁèeıÿÿHeŸ  H‰Áèfğÿÿ‹EƒÀ‰ÁèIıÿÿHRŸ  H‰ÁèJğÿÿ‹EPH‹EH‹@H‰Áè[ıÿÿ‹EƒÀ‰ÁèıÿÿH,Ÿ  H‰Áèğÿÿ‹EPH‹EH‹@H‰Áè‘şÿÿH‹EH‹@H…À„  ‹EƒÀ‰ÁèÔüÿÿHğ  H‰ÁèÕïÿÿ‹EPH‹EH‹@H‰ÁèNşÿÿéÛ   ‹E‰Áè üÿÿHÃ  H‰Áè¡ïÿÿ‹EƒÀ‰Áè„üÿÿH  H‰Áè…ïÿÿ‹EPH‹EH‹@H‰Áè–üÿÿ‹EƒÀ‰ÁèRüÿÿH  H‰ÁèSïÿÿ‹EPH‹EH‹@H‰ÁèÌıÿÿë]‹E‰Áè!üÿÿHW  H‰Áè"ïÿÿÇEü    ë)‹EPH‹EH‹H‹EüH˜HÁàHÈH‹ H‰ÁèƒıÿÿƒEüH‹E‹@9Eü|ËëëHƒÄ0]ÃUH‰åHƒì0H‰MH‰UL‰E L‰M(HE H‰EğH‹MğH‹UH‹EI‰ÈH‰Áè©$  ‰Eü‹EüHƒÄ0]ÃUSHƒì8Hl$0H‰M H‰U(L‰E0L‰M8HE(H‰EğH‹]ğ¹   H‹:ˆ  ÿĞH‰ÁH‹E I‰ØH‰ÂèV$  ‰Eü‹EüHƒÄ8[]ÃUH‰åHƒì0H‰MÇEü    ëC‹EüH˜HÁàH‰ÂHAÛ  H‹H‹UH‰Áè€  …Àu‹EüH˜HÁàH‰ÂH"Û  ‹ë@ƒEü‹ã  9Eü|²¹   H‹ª‡  ÿĞH‰ÁH‹EI‰ÀH  H‰Âèßşÿÿ¹   èU  HƒÄ0]ÃUSHƒì8Hl$0H‰M ‰U(ÇEü    ëF‹EüH˜HÁàH‰ÂH¡Ú  H‹H‹U H‰Áèq  …Àu‹EüH˜HÁàH‰ÂH‚Ú  ‹M(‰ëaƒEü‹hâ  9Eü|¯‹]â  H‹E H‰Áèi~  HcÓH‰ÑHÁáH@Ú  H‰‹6â  H˜HÁàH‰ÂH.Ú  ‹M(‰‹â  ƒÀ‰â  HƒÄ8[]ÃUH‰åHƒì@H‰MH‹E‹ ƒøtAƒø‡‹  …Àt
+    ƒøté}  H‹EH‹@H‰Áèü}  é’  H‹EH‹@H‰ÁèNşÿÿé}  H‹EH‹@H‰Áè˜ÿÿÿ‰EüH‹EH‹@(H‰Áè…ÿÿÿ‰EøH‹EH‹@H‰EğH‹EğH½›  H‰ÁèM~  …Àu‹Uü‹EøĞé'  H‹EğH››  H‰Áè)~  …Àu‹Eü+Eøé  H‹EğH{›  H‰Áè~  …Àu‹Eü¯Eøéâ  H‹EğHZ›  H‰Áèä}  …Àu‹Eü™÷}øé¿  H‹EğH9›  H‰ÁèÁ}  …Àu‹Eü;Eø”À¶Àé—  H‹EğH›  H‰Áè™}  …Àu‹Eü;Eø•À¶Àéo  H‹EğHïš  H‰Áèq}  …Àu‹Eü;EøœÀ¶ÀéG  H‹EğHÉš  H‰ÁèI}  …Àu‹Eü;EøÀ¶Àé  H‹EğH¤š  H‰Áè!}  …Àu‹Eü;EøŸÀ¶Àé÷   H‹EğH~š  H‰Áèù|  …Àu‹Eü;EøÀ¶ÀéÏ   H‹EğHYš  H‰ÁèÑ|  …Àu]H‹EH‹@‹ ƒøt*¹   H‹‚„  ÿĞH‰ÁH(š  H‰Âè¾ûÿÿ¹   è4  H‹EH‹@H‹@H‰Eè‹UøH‹EèH‰ÁèÆüÿÿ‹Eøë[¹   H‹4„  ÿĞH‰ÁH‹EğI‰ÀHî™  H‰Âèiûÿÿ¹   èß  ¹   H‹„  ÿĞH‰ÁHá™  H‰Âè?ûÿÿ¹   èµ  HƒÄ@]ÃUH‰åHƒì`H‰MHƒ} „:  H‹E‹ ƒø‡  ‰ÀH…    H8š  ‹H˜H,š  HĞÿàH‹EH‹@H‰EèH‹EH‹@ H‰ÁèÁüÿÿ‰Eä‹UäH‹EèH‰Áèêûÿÿ‹UäH‹EèA‰ĞH‰ÂHX™  H‰Áèàúÿÿé¾  H‹EH‹@H‰Áè~üÿÿ‰Eô‹Eô‰ÂHG™  H‰Áè´úÿÿé’  H‹EH‹@H‰EØH‹EØ‹ ƒøu~H‹EØH‹@H¦˜  H‰Áè{  …ÀucH‹EØH‹@‹ ƒøuTH‹EØH‹@H‹@H‰EĞH‹EØH‹@(H‰Áèüÿÿ‰EÌ‹UÌH‹EĞH‰Áè*ûÿÿ‹UÌH‹EĞA‰ĞH‰ÂHÃ˜  H‰Áè úÿÿéı   H‹EØH‰ÁèÁûÿÿéì   H‹EH‹@H‰Áè¬ûÿÿ‰Eø‹Eø‰ÂH£˜  H‰Áèâùÿÿƒ}ø tH‹EH‹@H‰ÁèZşÿÿé©   H‹EH‹@H…À„˜   H‹EH‹@H‰Áè4şÿÿéƒ   He˜  H‰Áè’ùÿÿH‹EH‹@H‰ÁèşÿÿH‹EH‹@H‰Áè%ûÿÿ…ÀuÍëOÇEü    ë#H‹EH‹P‹EüH˜HÁàHĞH‹ H‰ÁèÒıÿÿƒEüH‹E‹@9Eü|ÑëH˜  H‰Áè#ùÿÿëëHƒÄ`]ÃUH‰åHƒì0H‰M‰UÇEü    ë#‹EüH˜HÅ    H‹EHĞH‹ H‰ÁènıÿÿƒEü‹Eü;E|ÕHƒÄ0]ÃUH‰åHƒì0H‰MH‰UL‰E L‰M(HE H‰EğH‹MğH‹UH‹EI‰ÈH‰Áè)  ‰Eü‹EüHƒÄ0]ÃUSHƒì(Hl$ ‰M ‰U(H‹EÜ  ‹PH‹;Ü  ‹@9Â|FH‹-Ü  ‹PH‹#Ü  Ò‰PH‹Ü  ‹@H˜HÅ    H‹Ü  H‹ H‹ùÛ  H‰Áè™x  H‰H‹çÛ  L‹ H‹İÛ  ‹PJ‰HHcÂHÁàLÀ‹U ‰‹U(‰PHƒÄ([]ÃUSHƒì(Hl$ ‰M H‹¢Û  ‹PH‹˜Û  ‹@9Â|HH‹ŠÛ  ‹PH‹€Û  Ò‰PH‹tÛ  ‹@H˜H…    H‹`Û  H‹@H‹UÛ  H‰Áèõw  H‰CH‹BÛ  H‹PH‹7Û  ‹@H˜HÁàHĞ‹U ‰H‹Û  ‹PJ‰H‰ĞHƒÄ([]ÃUH‰åHƒì@H‰MH‹E‹ ƒøtpƒø‡o  …Àt
+    ƒøt9éa  H‹EH‹@H‰Áèßv  ‰Eğ‹Eğ‰Áèÿÿÿ‰Eì‹Eì‰Â¹    èSşÿÿéW  H‹EH‹@¶ ¾À‰Eô‹Eô‰Â¹   è.şÿÿé2  H‹EH‹@H‰ÁèiÿÿÿH‹EH‹@(H‰ÁèYÿÿÿH‹EH‹@H‰EøH‹EøH•  H‰Áèw  …Àuº    ¹   è×ıÿÿéÛ  H‹EøHf•  H‰ÁèÜv  …Àuº    ¹   è¬ıÿÿé°  H‹EøH=•  H‰Áè±v  …Àuº    ¹   èıÿÿé…  H‹EøH•  H‰Áè†v  …Àuº    ¹   èVıÿÿéZ  H‹EøHë”  H‰Áè[v  …Àuº    ¹   è+ıÿÿé/  H‹EøHÃ”  H‰Áè0v  …Àuº    ¹   è ıÿÿé  H‹EøH›”  H‰Áèv  …Àuº    ¹	   èÕüÿÿéÙ   H‹EøHr”  H‰ÁèÚu  …Àuº    ¹
+       èªüÿÿé®   H‹EøHJ”  H‰Áè¯u  …Àuº    ¹   èüÿÿéƒ   H‹EøH!”  H‰Áè„u  …Àuº    ¹   èTüÿÿë[¹   H‹3}  ÿĞH‰ÁH‹EøI‰ÀHè“  H‰Âèèûÿÿ¹   èŞ  ¹   H‹}  ÿĞH‰ÁHÛ“  H‰Âè¾ûÿÿ¹   è´  HƒÄ@]ÃUH‰åHƒì@H‰MH‹E‹ ƒø‡A  ‰ÀH…    HÁ“  ‹H˜Hµ“  HĞÿàH‹EH‹@ H‰ÁèóüÿÿH‹EH‹@¶ ¾À‰Eè‹Eè‰Â¹   èƒûÿÿé  H‹EH‹@H‰Áè¾üÿÿº    ¹   è_ûÿÿéğ  H‹EH‹@H‰Áèšüÿÿº    ¹   è;ûÿÿéÌ  ÇEü    ë#H‹EH‹P‹EüH˜HÁàHĞH‹ H‰ÁèÿÿÿƒEüH‹E‹@9Eü|Ñé  H‹EH‹@H‰Áè9üÿÿH‹?×  ‹@‰Eğº    ¹   èÍúÿÿH‹EH‹@H‰ÁèÍşÿÿH‹EH‹@H…ÀtwH‹×  ‹@‰Eìº    ¹   è”úÿÿH‹êÖ  H‹ãÖ  H‹‹EğH˜HÁàHÈ‹R‰PH‹EH‹@H‰ÁèqşÿÿH‹·Ö  H‹°Ö  H‹‹EìH˜HÁàHÈ‹R‰PéÏ   H‹Ö  H‹ˆÖ  H‹‹EğH˜HÁàHÈ‹R‰Pé§   H‹gÖ  ‹@‰EøH‹EH‹@H‰ÁèDûÿÿH‹JÖ  ‹@‰Eôº    ¹   èØùÿÿH‹EH‹@H‰ÁèØıÿÿ‹Eø‰Â¹   è¹ùÿÿH‹Ö  H‹Ö  H‹‹EôH˜HÁàHÈ‹R‰Pë*¹   H‹uz  ÿĞH‰ÁHc‘  H‰Âè1ùÿÿ¹   è'  HƒÄ@]ÃUSHƒì8Hl$0H‰M ‰U(¹    è,r  H‰Õ  H‹–Õ  ¹   èr  H‰H‹‚Õ  Ç@€   H‹tÕ  Ç@    H‹fÕ  ¹   èäq  H‰CH‹QÕ  Ç@€   H‹CÕ  Ç@    ÇEü    ë#‹EüH˜HÅ    H‹E HĞH‹ H‰ÁèÇüÿÿƒEü‹Eü;E(|Õº    ¹   èœøÿÿH‹òÔ  HƒÄ8[]ÃUH‰åHƒì H‰MH‹EH‹ H‰Áèq  H‹EH‹@H‰Áèq  H‹EH‰Áèüp  HƒÄ ]ÃUH‰åHƒì0H‰MH‰UL‰E L‰M(HE H‰EğH‹MğH‹UH‹EI‰ÈH‰Áè)  ‰Eü‹EüHƒÄ0]ÃUSHƒì8Hl$0H‰M H‰U(L‰E0L‰M8HE(H‰EğH‹]ğ¹   H‹ºx  ÿĞH‰ÁH‹E I‰ØH‰ÂèÖ  ‰Eü‹EüHƒÄ8[]ÃUH‰åHƒì ‰M‹Ø  =ÿ   ~*¹   H‹ux  ÿĞH‰ÁH™  H‰Âè1ÿÿÿ¹   è'  ‹á×  P‰Ø×  H˜H…    HÇÓ  ‹M‰HƒÄ ]ÃUH‰åHƒì ‹¬×  …Àu*¹   H‹x  ÿĞH‰ÁH@  H‰ÂèÈşÿÿ¹   è¾  ‹x×  ƒè‰o×  ‹i×  H˜H…    HXÓ  ‹HƒÄ ]ÃUSHì˜   H¬$   H‰M ÇEü    H‹E H‹ H‰Eğ‹EüP‰UüH˜HÅ    H‹EğHĞH‹ H‰E‹Eƒø‡E  ‰ÀH…    HÂ  ‹H˜H¶  HĞÿàH‹E H‹P‹E”H˜HÁàHĞ‹ ‰Áè“şÿÿé2  ‹E”H˜H…    HÃÖ  ‹‰Áèpşÿÿé  ‹]”èÒşÿÿHcÓH•    HšÖ  ‰éí  è³şÿÿ‰Eœè«şÿÿ‰E˜‹U˜‹EœĞ‰Áè*şÿÿéÉ  èşÿÿ‰E¤è‡şÿÿ‰E ‹E +E¤‰Áèşÿÿé§  èmşÿÿ‰E¬èeşÿÿ‰E¨‹E¨¯E¬‰Áèåıÿÿé„  èJşÿÿ‰E´èBşÿÿ‰E°‹E°™÷}´‰ÁèÂıÿÿéa  è'şÿÿ‰E¼èşÿÿ‰E¸‹E¸;E¼”À¶À‰Áèšıÿÿé9  èÿıÿÿ‰EÄè÷ıÿÿ‰EÀ‹EÀ;EÄ•À¶À‰Áèrıÿÿé  è×ıÿÿ‰EÌèÏıÿÿ‰EÈ‹EÈ;EÌœÀ¶À‰ÁèJıÿÿéé   è¯ıÿÿ‰EÔè§ıÿÿ‰EĞ‹EĞ;EÔÀ¶À‰Áè"ıÿÿéÁ   è‡ıÿÿ‰EÜèıÿÿ‰EØ‹EØ;EÜŸÀ¶À‰Áèúüÿÿé™   è_ıÿÿ‰EäèWıÿÿ‰Eà‹Eà;EäÀ¶À‰ÁèÒüÿÿëtè:ıÿÿ‰Eì‹Eì‰ÂH¦Œ  H‰Áè`üÿÿëVèıÿÿëOèıÿÿ‰Eèƒ}è u@‹E”‰Eüë8‹E”‰Eüë1‹]¹   H‹u  ÿĞH‰ÁA‰ØH]Œ  H‰ÂèĞûÿÿ¹   èÆ  éXıÿÿHÄ˜   []ÃHƒì(H‹%t  H‹ H…Àt"D  ÿĞH‹t  HPH‹@H‰ t  H…ÀuãHƒÄ(ÃfD  VSHƒì(H‹#“  H‹ƒøÿ‰Át9…Ét ‰ÈƒéHÂH)ÈHtÂø@ ÿHƒëH9óuõH~ÿÿÿHƒÄ([^é3Çÿÿ 1Àff.„      D@‰ÁJƒ<Â L‰Àuğë¥ff.„      ‹Ê×  …ÀtÃD  Ç¶×     éaÿÿÿ1ÀÃHƒì(ƒút…Òt¸   HƒÄ(Ãf„     è‹
+      ¸   HƒÄ(ÃVSHƒì(H‹#’  ƒ8tÇ    ƒútƒútN¸   HƒÄ([^ÃfH9–  H52–  H9ótßD  H‹H…ÀtÿĞHƒÃH9óuí¸   HƒÄ([^Ãf„     è
+      ¸   HƒÄ([^Ãff.„     @ 1ÀÃVSHƒìx)t$@)|$PD)D$`ƒ9‡Í   ‹H,Œ  Hc‚HĞÿà€    H‹  H‹qòDA òyòq¹   è£d  òDD$0I‰ñI‰Øò|$(H‰Áòt$ H¨‹  è;j  (t$@1À(|$PD(D$`HƒÄx[^ÃH‰Š  ë–€    HÙŠ  ë†€    H©Š  ésÿÿÿ@ H	‹  écÿÿÿ@ HÑŠ  éSÿÿÿH#‹  éGÿÿÿÛãÃVSHƒì8HD$XH‰Ë¹   H‰T$XL‰D$`L‰L$hH‰D$(èÄc  A¸   º   H"‹  I‰Áèši  H‹t$(¹   è›c  H‰ÚH‰ÁI‰ğèj  è i  €    WVSHƒìPHc5¶Õ  …öH‰Ë  H‹¨Õ  E1ÉHƒÀf„     L‹ L9ÃrH‹P‹RIĞL9Ã‚Š   AƒÁHƒÀ(A9ñuØH‰ÙèP
+      H…ÀH‰Ç„æ   H‹UÕ  H¶HÁãHØH‰x Ç     èc  ‹WA¸0   HH‹'Õ  HT$ H‰Lÿ_ò  H…À„}   ‹D$DPüƒâûtPÀƒâ¿uƒïÔ  HƒÄP[^_Ã ƒøA¸@   ¸   H‹L$ DDÀH‹T$8HÅÔ  I‰ÙH‰KH‰Sÿôñ  …Àu¶ÿªñ  HCŠ  ‰Âèdşÿÿ@ 1öé!ÿÿÿH‹ŠÔ  Hë‰  ‹WL‹Dè>şÿÿH·‰  H‰Úè/şÿÿff.„      UAWAVAUATWVSHƒìHHl$@‹=5Ô  …ÿtHe[^_A\A]A^A_]ÃÇÔ     è	  H˜H€HÅ   HƒàğèÊ  L‹-ƒ  H‹Œ  H)ÄÇãÓ      HD$0H‰ÛÓ  L‰èH)ØHƒø~–Hƒø]  ‹…À…c  ‹C…À…X  ‹Sƒú…¦  HƒÃL9ëƒ^ÿÿÿL‹%  A¿ÿÿÿÿëeƒù„?  ƒù…T  A·6âÀ   f…ö‰ó  HÎ  ÿÿH)ÆLÎ…ÒuHşÿÿ  1  Hş €ÿÿŒ$  L‰ñèhıÿÿfA‰6HƒÃL9ësc‹S‹D‹C¶ÊLàƒù L‹O4 „  †vÿÿÿƒù@…Ó  I‹6H)ÆLÎâÀ   u	H…ö‰Ç  L‰ñHƒÃèıÿÿL9ëI‰6r¤€    ‹¶Ò  …ÉyşÿÿH‹5ëï  Leü1ÛD  H‹™Ò  HØD‹ E…ÀtH‹PM‰áH‹HÿÖƒÇHƒÃ(;=pÒ  |Òé4şÿÿD  ‹…Ò…  ‹C‰ÁK…˜şÿÿHƒÃé‚şÿÿ€    A¶6âÀ   @„ö‰¥   HÎ ÿÿÿH)ÆLÎ…ÒuHşÿ   û   Hƒş€Œñ   L‰ñè5üÿÿAˆ6éÉşÿÿD  A‹6âÀ   …öyKI»    ÿÿÿÿL	ŞH)ÆLÎ…ÒuL9ş¯   H¸ÿÿÿÿÿÿÿH9Æœ   L‰ñèàûÿÿA‰6étşÿÿ„     H)ÆLÎ…ÒtÂëÜ@ H)ÆLÎ…Ò„^ÿÿÿépÿÿÿD  H)ÆLÎ…Ò„şÿÿé%şÿÿD  L9ëƒıÿÿL‹5À‹  ‹sHƒÃD‹cøLöD&H‰ñègûÿÿL9ëD‰&rßébşÿÿ‰ÊH‡  èÜúÿÿ‰ÊH‰t$ M‰ğH3‡  èÆúÿÿH¿†  èºúÿÿHƒìXH‹åĞ  H…ÀfÓt%ò„$€   ‰L$ HL$ H‰T$()T$0òD$@ÿĞHƒÄXÃfH‰©Ğ  é¤c  SHƒì H‹‹H‰Ë‰Ááÿÿÿ ùCCG „   =–  ÀwG=‹  Àvasÿÿ?ƒø	wkHà†  Hc‚HĞÿà€    1Ò¹   è<d  Hƒø„>  H…À…  H‹JĞ  H…ÀtEH‰ÙHƒÄ [Hÿàf.„     =  À„¥   w3=  €uË¸ÿÿÿÿHƒÄ [ÃöB…gÿÿÿëè@ 1ÀHƒÄ [Ã„     =  ÀtÍ=  Àu‘1Ò¹   è®c  Hƒø„œ   H…À„rÿÿÿ¹   ÿĞëf.„     1Ò¹   è|c  Hƒø…@ÿÿÿº   ¹   ècc  éjÿÿÿfD  1Ò¹   èLc  Hƒøt*H…À„ÿÿÿ¹   ÿĞé=ÿÿÿf„     ¹   ÿĞé(ÿÿÿº   ¹   èc  éÿÿÿº   ¹   èùb  é ÿÿÿº   ¹   èåb  è˜øÿÿéçşÿÿATUWVSHƒì L%/Ï  L‰áÿ¶ë  H‹ÿÎ  H…Ût6H‹-ãë  H‹=¤ë  @ ‹ÿÕH‰Æÿ×H…öt…Àu	H‹CH‰ñÿĞH‹[H…ÛuÜL‰áHƒÄ [^_]A\Hÿ%€ë  WVSHƒì ‹«Î  …À‰ÏH‰Öu
+    1ÀHƒÄ [^_Ãº   ¹   è™a  H…ÀH‰Ãt3H‰pH5Î  ‰8H‰ñÿë  H‹\Î  H‰ñH‰RÎ  H‰Cÿë  ë¬ƒÈÿë©VSHƒì(‹<Î  …À‰Ëu1ÀHƒÄ([^ÃD  H59Î  H‰ñÿÀê  H‹	Î  H…Ét'1ÒëH…ÀH‰ÊtH‰Á‹9ØH‹AuëH…ÒtH‰Bè%a  H‰ñÿ¤ê  1ÀHƒÄ([^Ã H‰ÁÍ  ëİff.„     @ SHƒì ƒú„²   w0…ÒtL‹Í  …À„¾   ÇŒÍ     ¸   HƒÄ [Ãf„     ƒúuç‹mÍ  …Àtİè<şÿÿëÖf.„     ‹RÍ  …Àuf‹HÍ  ƒøu·H‹4Í  H…Ût€    H‰ÙH‹[èd`  H…ÛuïH0Í  HÇÍ      ÇÍ      ÿé  élÿÿÿè[öÿÿ¸   HƒÄ [Ãè»ıÿÿë“f„     HéÌ  ÿƒé  é0ÿÿÿHƒì(H‹E‡  ÿfHƒì(H‹‡  ÿ1Àf9MZuHcQ<HÑ9PE  tÃ€    1Àfy”ÀÃ@ HcA<HÁD·A·AfE…ÀHDt2AHÿH‰LLÈ(„     D‹@L9ÂL‰ÁrHH9ÊrHƒÀ(L9Èuã1ÀÃWVSHƒì H‰ÎèÁ_  Hƒøw{H‹†  1Ûf:MZuYHcB<HĞ8PE  uJfxuB·PH\·Pf…ÒtBBÿH€H|Ã(ë@ HƒÃ(H9ût'A¸   H‰òH‰Ùè^_  …ÀuâH‰ØHƒÄ [^_Ã€    1ÛH‰ØHƒÄ [^_Ã H‹‰…  1Àf:MZuLcB<IĞA8PE  tÃ€    fAxuïA·@H)ÑID E·@fE…Àt4APÿH’LLĞ(f.„     D‹@L9ÁL‰ÂrPH9Ñr¬HƒÀ(L9Èuã1ÀÃH‹	…  1Éf8MZuHcP<HĞ8PE  t	‰ÈÃfD  fxuï·H‰ÈÃf„     L‹É„  1ÀfA8MZuIcP<LÂ:PE  tÃ€    fzuğD·B·BfE…ÀHDt,APÿH’HTĞ(€    ö@' t	H…Ét½HƒéHƒÀ(H9Âuè1ÀÃff.„     fH‹I„  1Òf8MZuHcH<HÁ9PE  t	H‰ĞÃD  fyHDĞH‰ĞÃf.„     H‹	„  1Àf:MZuLcB<IĞA8PE  tÃ€    fAxuïE·HH)ÑA·PfE…ÉITt×AAÿH€LLÂ(f.„     D‹BL9ÁL‰ÀrBH9ÁrHƒÂ(I9Ñuã1ÀÃ‹B$÷ĞÁèÃ€    L‹yƒ  E1ÉfA;MZuMcC<MØA8PE  tL‰ÈÃf.„     fAxuéA‹€   …ÀtŞE·PA·PfE…ÒITtÉEBÿO€NTÂ(f.„     D‹JL9ÈM‰Èr	DBL9ÀrHƒÂ(I9ÒuâE1ÉL‰ÈÃ LØë
+     ƒéHƒÀD‹@E…Àu‹P…Òt×…ÉåD‹HMÙL‰ÈÃQPH=   HL$rHé   Hƒ	 H-   H=   wçH)ÁHƒ	 XYÃWVSHƒì0H‰ËH‰ÖL‰Çè«T  I‰ñE1ÀH‰ÚH‰|$ ¹ `  èC  H‰Ù‰ÆèùT  ‰ğHƒÄ0[^_Ãf.„     fD  HƒìhH‹‹RA‰ËH‰D$PA‰Ò‰T$XH‰ÑfAâÿutH‰ÂHÁê 	Ğ„   …Ò‰•   A’Â¿ÿÿ¸   ¿Ò‰D$Dá €  H‹„$   ‰HD$HL‰L$0H‘b  D‰D$(LL$DH‰D$8LD$PD‰\$ è³*  HƒÄhÃfD  fAúÿu›H‰ÂHÁê âÿÿÿ	Ât/ÇD$D   1Ò1Éë•1À1Òë„f.„     ¸   ºÃ¿ÿÿékÿÿÿ¸   1Òé^ÿÿÿ@ SHƒì H‰Ó‹RöÆ@u‹C$9C(~€æ H‹u HcS$ˆ‹C$ƒÀ‰C$HƒÄ [Ãf.„     H‰ÂèàY  ‹C$ƒÀ‰C$HƒÄ [Ãf„     AWAVAUATUWVSHƒìHLl$(‰ÖL‰ÃH|$01ÒH‰ÍM‰èH‰ùèT  ‹C9Æ‰ÂNÖ…À‹CIò9ğâ   ÇCÿÿÿÿDfÿ…ö)  1öAƒÄfD  ·Tu M‰èH‰ùè8T  …À   ƒèI‰şL|ë HcS$ˆ‹C$ƒÀM9ş‰C$t7‹SIƒÆöÆ@u‹C$9C(~á€æ A¾NÿH‹tÊH‰ÂèúX  ‹C$ƒÀM9ş‰C$uÉHƒÆD‰à)ğ…À{ÿÿÿ‹CPÿ…À‰S~ fD  H‰Ú¹    è“şÿÿ‹CPÿ…À‰SæHƒÄH[^_]A\A]A^A_Ã)ğöC	‰Cu:ƒè‰C@ H‰Ú¹    èSşÿÿ‹CPÿ…À‰SuæDfÿ…ööşÿÿë¥„     Dfÿ…öàşÿÿƒké{ÿÿÿÇCşÿÿÿëŒfWVSHƒì A‹@‰×9Â‰ÂN×…ÀA‹@H‰ÎL‰ÃIú9ø½   AÇ@ÿÿÿÿWÿ…ÿ„—   ‹CzH÷ë€    HcC$ˆ‹S$ƒÂH9ş‰S$t<‹CHƒÆöÄ@u‹S$9S(~áöÄ ¾NÿH‹tËè®W  ‹S$ëËHcC$Æ ‹S$ƒÂ‰S$‹CPÿ…À‰S~.‹CöÄ@u‹S$9S(~İöÄ H‹tÊ¹    èhW  ‹S$ëÆÇCşÿÿÿHƒÄ [^_Ã@ )ø‰ÂA‰@A‹@öÄu7BÿA‰@H‰Ú¹    èıÿÿ‹CPÿ…À‰SuæWÿ…ÿ…ÿÿÿéwÿÿÿfD  Wÿ…ÿ…ÿÿÿƒkémÿÿÿff.„     VSHƒì(Hz  H‰ÖHcRH…ÉH‰ËHDØH‰Ù…ÒxèfO  I‰ğ‰ÂH‰ÙHƒÄ([^ésşÿÿ è;W  ëãf„     Hƒì8¸-   E‹P…ÉAÇ@ÿÿÿÿtGˆD$,LL$-L\$,Aƒâ 1É¶
+    ƒàßD	ĞAˆ	HƒÁHƒùuèIQL‰ÙD)ÚèşÿÿHƒÄ8ÃfD  A÷Â   t¸+   ë©AöÂ@t
+    ¸    ëœ L\$,M‰ÙëfD  UAWAVAUATWVSHƒì8Hl$0ƒùoA‰ÍL‰Ã„  E‹p1ÀE‹@E…öAIÆD‰ÇƒÀA÷À   …  D‹KA9ÁAMÁH˜HƒÀHƒàğèîùÿÿ¹   H)ÄLd$ H…ÒA¿   „g  E‰êL‰æ‰}üAƒâ L‰eğff.„     ff.„     ff.„     D‰øI‰óHƒÆ!ĞD`0ƒÀ7D	ĞD‰çA€ü:CøHÓêH…Ò@ˆ~ÿuÔL‹eğ‹}üL9æ„¼  E…ö#  H‰ğE‰÷L)àA)ÇE…ÿ³  Aƒıo„H  D9È£  A)ÁAà   E‰ÏD‰K„À  AƒïE…ÿd  H‰ğDˆ.HƒÆ÷Ç   Æ@0…¥  AƒïH‰Ú¹    èsúÿÿAƒïsíI9ôƒº   ‹{A½şÿÿÿA¿ÿÿÿÿë HcC$ˆ‹C$ƒÀI9ô‰C$s8‹{Hƒî÷Ç @  u‹C$9C(~Şç    ¾H‹tÆè9T  ‹C$ƒÀI9ô‰C$rÈE…ÿëR@ HcC$Æ ‹C$ƒÀAƒí‰C$r7‹{÷Ç @  u‹C$9C(~áç    H‹tË¹    èáS  ‹C$ƒÀAƒí‰C$sÉHe[^_A\A]A^A_]Ãf„     fƒ{  „íıÿÿ¹   A‰ÂA¹«ªªªM¯ÑD‹KIÁê!DĞD9ÈALÁH˜HƒÀHƒàğèÂ÷ÿÿH)ÄAƒıoLd$ …Ïıÿÿéé    D‰À€ä÷E…ö‰C&  E‰÷McÇAƒïH‰ñD‰MüMcÿº0   èS  Jt>D‹MüL9æ„Ö   H‰ğL)àD9È‰ÂŒİ   AƒıoÇCÿÿÿÿ„gşÿÿD‹CAà   „VşÿÿDˆ.HFA¿ÿÿÿÿÆF0é}  D  E‹p1ÀE‹@E…öAIÆD‰ÇƒÀA÷À   „t  fƒ{  …e  D‹KD9ÈALÁH˜HƒÀHƒàğèÏöÿÿ¹   H)ÄLd$ H…ÒA¿   …áüÿÿD‰ÀL‰æE‰÷€ä÷E…ö‰CÿÿÿE…ö„,ÿÿÿfÆ0HƒÆH‰ğL)àD9È‰Â#ÿÿÿA)ÑAƒıo‹{E‰ÏD‰KuSE…öˆ-  ÷Ç   „[ıÿÿEoÿI9ô‚›ıÿÿéğıÿÿfD  Aƒıo„á   H‰ğL)àD9È  A)ÁD‰ÇE‰ÏD‰K÷Ç   uRE…öy©‰ø%   =   u›º0   McÇH‰ñèÿQ  Ewÿç   McöJT6„Í   Dˆ*JD6A¿ÿÿÿÿÆB0ë AƒïE…ÿc  Dˆ.HFÆF0I9Äƒ}ıÿÿ‹{EoÿH‰Æéàüÿÿ„     D‹KA9ÁAMÁé’şÿÿAƒıo„³   E…ö…ÍşÿÿE…ÉÚ   1ÒéÕşÿÿA÷À   ttÆ0IsL9æ…Îıÿÿé”şÿÿ‰ø%   =   …Áşÿÿº0   McÇH‰ñè%Q  AGÿH˜HTH‰ĞA¿ÿÿÿÿéTÿÿÿA÷À   t!IƒÃÆ0M9ÜL‰Ş…rıÿÿL‰æé@şÿÿH‰ğL)àD9È}$A)ÁD‰ÇE‰ÏD‰KéNşÿÿE…ö…şÿÿE…ÉMÿÿÿÇCÿÿÿÿé¸ûÿÿD  ÇCÿÿÿÿéDıÿÿ¹   éŠüÿÿÇCÿÿÿÿA‰Àé+ıÿÿD‰ÀL‰æE‰÷€ä÷E…ö‰CÀüÿÿ„ğşÿÿé¸ıÿÿE…öH‰ğ‰0ûÿÿ‰úâ   ú   …ûÿÿé,şÿÿ UAWAVAUATWVSHƒì(Hl$ 1ÀD‹r‹zE…öH‰ÓAIÆƒÀ÷Ç   tfƒz  …Â  ‹s9ÆMÆH˜HƒÀHƒàğèËóÿÿH)Ä@öÇ€Ld$ tH…ÉˆÔ  @€ç‰{H…É„œ  I»      €A‰úM‰àAâ   I¹ÍÌÌÌÌÌÌÌ M9Ät+E…Òt&fƒ{  tL‰ÀL)àL!ØHƒøuAÆ ,IƒÀ„     MhH‰ÈI÷áH‰ÈHÁêL<’MÿL)øƒÀ0Hƒù	Aˆ v	H‰ÑM‰èë¡E…öG  L‰èE‰÷L)àA)ÇE…ÿ  McÇAƒïL‰éMcÿº0   èO  Ol=M9ì„æ   …ö~CL‰èL)à)Æ…ö‰s~4÷ÇÀ  tƒî‰sE…öy‰ø%   =   „ğ  ç   „  ‹{@öÇ€„¤  IuAÆE -I9ôr*é  f„     HcC$ˆ‹C$ƒÀI9ô‰C$„ø   ‹{Hƒî÷Ç @  u‹C$9C(~Úç    ¾H‹tÂèåM  ‹C$ëÂ„     ‰ÂA¸«ªªªI¯ĞHÁê!Ğé'şÿÿf„     M9ì…ÿÿÿAÆE 0IƒÅéÿÿÿf„     H÷Ùé4şÿÿ„     M9ì…êşÿÿE…öuË…ö$ÿÿÿ÷ÇÀ  ‰s…,  ç   …ÿÿÿƒk H‰Ú¹    èóÿÿ‹CPÿ…À‰Sæéàşÿÿf„     HcS$Æ ‹C$ƒÀ‰C$‹CPÿ…À‰S~2‹SöÆ@u‹C$9C(~İ€æ H‹tÊH‰Â¹    èåL  ‹C$ëÃ„     He[^_A\A]A^A_]Ã€    E…öM‰åE‰÷÷ıÿÿ…üşÿÿ…ö1ÿÿÿ ÷Ç   tIuAÆE +éOşÿÿf@öÇ@L‰î„@şÿÿHƒÆAÆE  é2şÿÿ‹C‹{Pÿ…À‰SşÿÿHcğL‰éº0   I‰ğIõè£L  ÇCÿÿÿÿééıÿÿƒî‰séÏıÿÿ@ UATWVSHƒì0Hl$0ƒyıH‰Ë„Ô   ·Qf…Ò„§   HcCH‰çHƒÀHƒàğè3ğÿÿLEøH)ÄHÇEø    Ht$ H‰ñè·F  …ÀÏ   ƒèLdëD  HcS$ˆ‹C$ƒÀI9ô‰C$t6‹SHƒÆöÆ@u‹C$9C(~á€æ ¾NÿH‹tËH‰Âè{K  ‹C$ƒÀI9ô‰C$uÊH‰üH‰ì[^_A\]Ã„     H‰Ú¹.   è#ñÿÿH‰ì[^_A\]Ã„     HÇEø    HuøèoK  HMöI‰ñA¸   H‹èŠH  …À~.·Uöf‰S‰CéöşÿÿfD  H‰Ú¹.   èÃğÿÿH‰üéyÿÿÿ ·SëÔfUWVSHƒì(A‹AE…À‰ÍH‰×D‰ÆL‰ËØ  A9À  A‹QD)À9Ğè  A‹QAÇAÿÿÿÿ¸ÿÿÿÿ€æ„Î  fƒ{  „Ã  VA¸«ªªª‰ÁI¯ĞHÁê!ƒú„§  ƒê‰È)Êëff.„      ƒè‰ÑÁ‰C„€  …Àì@ …í…È  ‹SöÆ…$  ƒâ@tH‰Ú¹    èâïÿÿf‹C…À~‹Sâ   ú   „  …öœ  @ ¶¹0   „ÀtHƒÇ¾ÈH‰ÚèïÿÿƒîtxöC	tÚfƒ{  tÓiÆ«ªªª=UUUUwÆHK I‰Øº   èÍïÿÿë³ AöA	AÇAÿÿÿÿ„MÿÿÿfAƒy  „AÿÿÿAP¸«ªªª¹ÿÿÿÿH¯ĞHÁê!ƒú…óşÿÿéÿÿÿD  ‹C…ÀöC	uƒè‰CHƒÄ([^_]Ã@ H‰Ùèøüÿÿë!fD  ¶¹0   „ÀtHƒÇ¾ÈH‰ÚèÕîÿÿ‹CPÿ…À‰SØHƒÄ([^_]Ã€    …À@  A‹Qƒè9Ğ?  )Ğ…Ò  ƒèA‰A…À€şÿÿ…í…0  ‹S÷ÂÀ  …I  €æ…ˆşÿÿƒè‰CfH‰Ú¹    èSîÿÿ‹CPÿ…À‰Sæ…í„>şÿÿfD  H‰Ú¹-   è+îÿÿéFşÿÿfD  H‰Ú¹0   èîÿÿ‹C…ÀH  öC	…>  …ö„ãşÿÿfD  ğ‰C H‰Ú¹0   èÛíÿÿƒÆuîéüşÿÿH‰Ú¹+   èÃíÿÿéŞıÿÿfD  ƒè‰CfH‰Ú¹0   è£íÿÿ‹CPÿ…À‰SæéÍıÿÿ)Ğ…Ò~   ƒèA‹QA‰AéıÿÿfD  uA‹Q…Òˆº   ÇCÿÿÿÿéNıÿÿfD  Pÿ…Ò‰S„
+    ÿÿÿ÷C   …ışÿÿƒèéÈşÿÿD  Hÿ…É‰K„ıÿÿöÆ…ıÿÿëÚ€    ‹S‰CöÆu%…ömşÿÿ€æ„dşÿÿfƒ{  …üÿÿéTşÿÿ@ ƒè…ö‰Ccüÿÿé5şÿÿD  H‰Ùè¸úÿÿ…ö„Ûıÿÿ‹Cé¸şÿÿ‰Ğ÷ØAöA	A‰A„şÿÿ‰Ğ÷ĞA‰Aéøıÿÿ„     WVSHƒì Aº   AƒèA‰ËL‰ËIcğAÁøHiÎgfffHÁù"D)ÁtfHcÁÁùAƒÂHiÀgfffHÁø")È‰Áuå‹C,ƒøÿuÇC,   ¸   D‹CD9ĞD‰×I‰ÙMøOD‰À)ÈA9È¹ÿÿÿÿNÁA¸   D‰Ù‰Cè=ûÿÿ‹KH‰Ú‹C,‰C‰Èƒá À  ƒÉE‰CèÌëÿÿGH‰ÚH‰ñCHƒÄ [^_éöÿÿ@ VSHƒìXD‹BÛ)E…ÀH‰Óx\AƒÀHD$H¹   HT$0H‰D$ Û|$0LL$Lè†êÿÿD‹D$L‹L$HH‰ÆAø €ÿÿt1I‰ÙH‰ÂèÖşÿÿH‰ñè®  HƒÄX[^ÃfD  ÇB   A¸   ë™I‰ØH‰ÂèµîÿÿH‰ñè}  HƒÄX[^ÃD  VSHƒìXD‹BÛ)E…ÀH‰ÓyÇB   A¸   HD$H¹   HT$0H‰D$ Û|$0LL$LèİéÿÿD‹D$L‹L$HH‰ÆAø €ÿÿthH‰ÂI‰Ùèıùÿÿ‹Cë„     HcC$Æ ‹S$‹CƒÂ‰S$‰Âƒè…Ò‰C~;‹KöÅ@u‹S$9S(~Ş€å H‹tÈ¹    è†D  ‹S$‹CëÄfD  I‰ØH‰ÂèÕíÿÿH‰ñè  HƒÄX[^ÃD  UWVSHƒìXD‹BÛ)E…ÀH‰Óˆî   „Ğ   HD$H¹   HT$0H‰D$ Û|$0LL$Lèşèÿÿ‹|$L‹l$HH‰Æÿ €ÿÿ„Ç   ‹C%   ƒÿı|J‹S9×C…À„»   )ú‰SI‰ÙA‰øH‰ò‰éèöøÿÿë@ H‰Ú¹    è“éÿÿ‹CPÿ…À‰Sæë&@ …Àu4H‰ñè4D  ƒè‰CI‰ÙA‰øH‰ò‰éèŞüÿÿH‰ñè¶  HƒÄX[^_]Ã@ ‹CƒèëÏÇB   A¸   éÿÿÿfD  ÇB   A¸   éÿÿÿfD  I‰ØH‰Â‰éè“ìÿÿë£H‰ñè¸C  )ø‰C‰7ÿÿÿ‹S…Ò,ÿÿÿĞ‰Cé"ÿÿÿ„     AUATUWVSHƒìXH…ÉL‰ÃI‰ÉE‹@u	f…Ò„ä   DRıAƒø†   M…ÉI¿ê¸   „  D‹CH|$0H‰şE‰ÃAƒã ë.€    H9÷r	D‹cE…äxQ0H‰ñHƒÆˆIÁéƒè„)  D‰Éƒáƒø„Ú   ‹S…Ò~ƒê‰S…Ét¹ƒù	‰ÊvÀƒÂ7H‰ñD	Úë»€    ¹   ¸   IÑéD)ÁÁáHÓàLÈ‰i  DR¹   HÁèD)ÁI¿êÁáHÓèI‰ÁA@é?ÿÿÿ Aƒø‡  ¹   ¸   1íD)ÁE1ÒÁáHÓà¹   HÀD)ÁÁáHÓèH…ÀI‰Áu¹E…Àu´D‹CH|$0A÷À   H‰øt
+    ÆD$0.HD$1HpÆ 0ëIH9÷rA÷À   u‹S…Òÿ  €    Æ.HƒÆéÿÿÿ…Ò…/  Æ0HƒÆD  H9ş„÷  D‹KA¼   E…Éš   ‹SH‰ñA¿ÂH)ùD
+    …ÒD‰ÂAOËâÀ  ƒúI¿ÒƒÙúÁøHiÒgfffA‰ËHÁú")Ât>ff.„     f.„     HcÂÁúAƒÃHiÀgfffHÁø")Ğ‰ÂuåE‰ÜA)ÌAƒÄE¿äE9Ù~  E)ÙA÷À   „–  D‰KAöÀ€…H  A÷À   …c  Aƒà@…é  H‰Ú¹0   è<æÿÿ‹KH‰Úƒá ƒÉXè+æÿÿ‹C…À~.öC	t(ƒè‰C„     H‰Ú¹0   èæÿÿ‹CPÿ…À‰SæLl$.H9÷r#ëOf.„     ·C f…Àf‰D$.…   H9şt.¾NÿHƒîƒù.t|ƒù,t×H‰Úè¯åÿÿëßD  H‰Ú¹0   è›åÿÿ‹CPÿ…À‰Sæ‹KH‰Úƒá ƒÉPè}åÿÿ‹CH‰ÚH‰éDcÀ  fnÀfAnÌfbÁfÖCHƒÄX[^_]A\A]é˜ïÿÿ„     H‰Ùè8óÿÿéeÿÿÿ I‰Øº   L‰éè€åÿÿéMÿÿÿ H‰Ú¹-   èåÿÿé½şÿÿfD  A¹ÿÿÿÿé‡şÿÿD  H‰Ú¹+   èãäÿÿé•şÿÿfD  AƒéD‰KH‰Ú¹    èÃäÿÿ‹CPÿ…À‰SæD‹CéCşÿÿD  E…À   1íE1ÒE1É¸   éüÿÿD  I¿êéÙüÿÿ€    E…Àãûÿÿéâüÿÿf.„     H‰Ú¹    èSäÿÿéşÿÿfD  …É„ıÿÿƒù	‰Ê‡üÿÿƒÁ0HƒÆˆNÿéıÿÿfD  ‹C…À¢üÿÿé‘üÿÿD‹CH|$01íE1Òé~üÿÿH9ş…İüÿÿ‹S…ÒvüÿÿH‰øéxüÿÿAWAVAUATUWVSHì¨   L‹¬$  ‰ÏH‰ÕD‰ÃL‰Îç `  èw=  ¾1ÒH‰l$p‹ ‰œ$˜   H^‰|$xÇD$|ÿÿÿÿÇ„$Œ       ‰D$0H¸ÿÿÿÿıÿÿÿH‰„$€   1À…Éf‰„$ˆ   ‰Èf‰”$   Ç„$”       Ç„$œ   ÿÿÿÿ„@  L|$|L%­`  ëI ‹T$x‹´$”   öÆ@u	9´$˜   ~€æ L‹D$pumHcÖAˆƒÆ‰´$”   ¶HƒÃ¾È…É„â   ƒù%uµ¶‰|$xHÇD$|ÿÿÿÿ„À„Å   H‰ŞM‰ûE1ÒE1öPà¾ÈHn€úZwZ¶ÒIc”LâÿâfD  L‰Âè¸<  ë¶F<6„Â  <3…Ğ  €~2„“	  HVAº   H‰îA¾   H‰Õ¹3   D  ƒè0<	‡  Aƒş„…  E…ö…B  A¾   M…ÛtA‹…Àˆ  €DAĞA‰f¶FH‰î„À…Hÿÿÿ‹Œ$”   ‰ÈHÄ¨   [^_]A\A]A^A_Ã d$xÿşÿÿAƒú„ê  Aƒú„”  AƒúA‹E „‚  ‰ÂAƒú¶ÀHEÂƒùuH‰D$`„É  LD$pH‰Âè®åÿÿé±   f„     ¶FAº   H‰îA¾   é_ÿÿÿL$x€   I]Aƒú„w  AƒúIcM tAƒú„  H¾ÁAƒúHDÈI‰İH‰ëHT$pèrëÿÿé)şÿÿD  I‹] Hu^  H…ÛHDØ‹„$€   …Àˆ  HcĞH‰Ùèü3  LD$pH‰Ù‰Âè=áÿÿD  IƒÅH‰ëéØıÿÿE…öu
+    9|$x„W  I‹U I]¹x   LD$pI‰İH‰ëèÀäÿÿé§ıÿÿA‹E I]AƒêÇ„$€   ÿÿÿÿAƒú†y  HL$`º   ˆD$`I‰İLD$pH‰ëèLâÿÿécıÿÿ‹D$xI‹M ƒÈ ¨‰D$x„  ‹YH‹	D¿ÓH‰ÚGI‰ÉIÁé E·ÛAáÿÿÿA	ÉE‰ÈA÷ØE	ÈAÁèE	ØA»şÿ  E)ÃAÁûE…Û…2  f…Ûˆz  fâÿ„_  fúÿu	E…É„/  fêÿ?é¸  AƒêAƒú† şÿÿI‹M HT$pIƒÅH‰ëèãâÿÿéªüÿÿ¶FA¾   H‰îƒL$xé~ıÿÿ‹D$xI‹U ƒÈ ¨‰D$x„Ø  Û*HL$@Û|$@HT$pèKôÿÿé~şÿÿ‹D$xI‹U ƒÈ ¨‰D$x„Ø  Û*HL$@Û|$@HT$pèúôÿÿéMşÿÿ¶F<h„Á  H‰îAº   A¾   éüüÿÿ‹D$xI‹U ƒÈ ¨‰D$x„%  Û*HL$@Û|$@HT$pè)óÿÿéüıÿÿ‹L$0H‰ëè€9  HT$pH‰ÁèûáÿÿéÂûÿÿ¶F<l„9  H‰îAº   A¾   éüÿÿI‹U IƒÅAƒúHc„$”   „  Aƒú„K  Aƒút
+    Aƒú„?  ‰é‡ıÿÿE…ö…BüÿÿƒL$x@¶FH‰îé8üÿÿE…ö…(üÿÿL$x   ¶FH‰îéüÿÿ‹D$x‹œ$”   öÄ@u	9œ$˜   ~öÄ H‹T$p…¾  HcÃÆ%ƒÃ‰œ$”   H‰ëéğúÿÿE…ö…ËûÿÿLL$`L‰\$8L$x   D‰T$4L‰L$ ÇD$`    è"8  L‹L$ HL$^A¸   H‹Pè95  D‹T$4…ÀL‹\$8~·T$^f‰”$   ‰„$Œ   ¶FH‰îébûÿÿM…ÛtvA÷Æıÿÿÿ…Ã  A‹E IU…ÀA‰ˆ'  ¶FI‰ÕH‰îE1Ûé+ûÿÿE…ö…ûÿÿL$x   ¶FH‰îéûÿÿE…ö…şúÿÿL$x   ¶FH‰îéñúÿÿAƒş†ç  ¶FA¾   H‰îéÕúÿÿE…ö…Ö  L$x   ¶FH‰îé¸úÿÿ‹D$xI‹M ¨…qüÿÿI‰È‰ÊIÁè ÷Ú	ÊE‰ÁAáÿÿÿÁêD	ÊA¹  ğA9ÑˆÃ  H‰L$ İD$ Û|$ H‹T$(f…Òy€‰D$xD‰ÀAà  ğ%ÿÿ Aø  ğA•Á	È•ÁAÉ…ú   D	À„ñ   LD$p‰ÑH£Y  á €  è®ßÿÿéAûÿÿf„     Ç„$€   ÿÿÿÿI]A‹E HL$`º   I‰İLD$pH‰ëf‰D$`è>Üÿÿéåøÿÿ‹D$xI‹U ¨…ÛüÿÿH‰T$ HL$@İD$ Û|$@HT$pèıïÿÿéĞúÿÿ‹D$xI‹U ¨…(üÿÿH‰T$ HL$@İD$ Û|$@HT$pèlğÿÿéŸúÿÿ‹D$xI‹U ¨…(üÿÿH‰T$ HL$@İD$ Û|$@HT$pèñÿÿénúÿÿfâÿH‹D$ „ò   fú <Ş   D¿Â¹<  D)ÁHÓèÊfêü?HÁèH‰ÁLD$pè4òÿÿé'úÿÿAƒş„?  ¹0   Aƒş¸   DDğé²øÿÿH‰Ùè¶5  LD$pH‰Ù‰Âè'ÛÿÿéêùÿÿLD$p1ÉH*X  è?ŞÿÿéÒùÿÿH‰îAº   A¾   éøÿÿ¶FE1ÛH‰îA¾   éxøÿÿH…É¸ÀÿÿEĞécÿÿÿ€‰D$xé{úÿÿÇ„$€      ‰ø€Ì‰D$xéùÿÿf…Ò…*ÿÿÿH…À¹üÿÿEÑéÿÿÿ·ÀéƒøÿÿH¿ÉéñøÿÿH‰éGùÿÿƒé0A‰¶FH‰îé øÿÿ¶FA¾   H‰îÇ„$€       Lœ$€   éÛ÷ÿÿI‹E é2øÿÿI‹M é øÿÿHT$pH‰Áèäÿÿéèøÿÿ€~4„À   ‹D$x‹´$”   öÄ@u9´$˜   ›öÿÿöÄ H‹T$p…	  HcÆÆ%éöÿÿ€    ˆéøÿÿ¶FAº   HƒÆA¾   éO÷ÿÿ¶FAº   HƒÆA¾   é6÷ÿÿ¹%   è]3  é:ûÿÿA‹E é~÷ÿÿf‰éKøÿÿE…öuV‹D$x€ÌfnÀ‹D$|÷ØfnÈfbÁfÖD$xé°ûÿÿ¶FAº   HƒÆA¾   éÔöÿÿ¶FAº   HƒÆA¾   é»öÿÿ¶FI‰ÕH‰îE1ÛÇ„$€   ÿÿÿÿA¾   é˜öÿÿLD$pD‰ÑHV  á €  èÜÿÿéª÷ÿÿ¹%   è 2  éuõÿÿSHƒì 1Ûƒù~ ¸   ff.„     @ ÀƒÃP9Ê|ô‰Ùè}  ‰HƒÀHƒÄ [ÃWVSHƒì AƒøH‰ÎH‰×~u¸   1ÛfD  ÀƒÃPA9Ğó‰Ùè<  HV‰¶L@„ÉˆHL‰Àt&ff.„     f.„     ¶
+    HƒÀHƒÂ„ÉˆuïH…ÿtH‰L‰ÀHƒÄ [^_Ã@ 1Ûë¡@ º   H‰È‹IüÓâfnÁHHüfnÊfbÁfÖ@é¹  f„     AWAVAUATUWVSHƒì81À‹z9yI‰ÍI‰ÖŒ  HZƒï1ÒLaLcßIÁãJ,MãE‹‹E HD‰À÷ñA9È‰D$,‰ÆrmA‰ÇI‰ÚM‰á1ÀE1Àff.„     ff.„     @ A‹IƒÂIƒÁA‹IüI¯×HÂH‰Ğ‰ÒH)ÑHÁè L)ÁI‰ÈA‰IüIÁè AƒàL9ÕsÇE‹E…É„Æ   L‰òL‰éèğ#  …ÀxlL‰á1Òff.„     ff.„     ff.„     fD  ‹HƒÃHƒÁD‹CüL)ÀH)ĞH‰Â‰AüHÁê ƒâH9İsÚHcÇI„‹…Ét6‹t$,ƒÆfD  ‰ğHƒÄ8[^_]A\A]A^A_Ãff.„     f‹…ÒuƒïHƒèI9Ärî‹t$,A‰}ƒÆëÁE‹E…ÀuƒïIƒëM9ÜrìA‰}L‰òL‰éè#  …À‰)ÿÿÿë“AWAVAUATUWVSHì¨   ‹„$  A‹)D‹´$  ‰D$0H‹„$   I‰ÌL‰Ë‰T$@L‰D$8H‰D$ H‹„$(  H‰D$(‰èƒàÏA‰‰èƒàƒø„à  ‰ïƒç‰|$L…I  …À„‰  D‹91É¸    Aƒÿ ~ÀƒÁA9ÇöèQ  AOÿH‰ÆH‹D$8ÁùHVHcÉLˆ€    D‹HƒÀHƒÂI9ÀD‰JüsìH‹D$8IƒÀHÁáHƒÀI9À¸    HBÈHƒÁHÁùHA‰Íë+ff.„     ff.„     „     HƒèE…í„C  ‹xD‰êAƒí…ÿtåMcí‰VÁâB½D®ƒğ)ÂA‰ÕH‰ñè  ‹|$@…À‰„$œ   ‰|$\…  D‹^E…Û„‚  H”$œ   H‰ñè²#  ‹|$\fïÉfH~ÀH‰Â‰ÀHÁê F/âÿÿ AHÿÊ  ğ?ò*ÉI‰ÑòYS  IÁá L	ÈA¹   E)Á…ÉfHnÀDIÉò\ÆR  òYÆR  Aé5  òX¿R  E…ÉòXÁ~fïÉòA*ÉòYµR  òXÁò,øfïÉf/È‰|$T‡ƒ  A‰É‰ÀAÁáDÊ‰ÒHÁâ H	ĞH‰ÇH‰D$xD‰è)È‹L$TDXÿD‰\$Xƒù‡;  L‹\U  HcÑfHnïòAÒf/Å‡œ  …À  AË‰L$tD‰\$XÇ„$€       ÇD$`    ÇD$h    é:  1ÿƒøufH‹D$ A¸   H‹T$(HËQ  Ç  €ÿÿHÄ¨   [^_]A\A]A^A_é„úÿÿ@ H‰ñèè  H‹D$ A¸   H‹T$(HQ  Ç    èVúÿÿH‰ÇH‰øHÄ¨   [^_]A\A]A^A_Ã@ H‹D$ A¸   H‹T$(HAQ  Ç  €ÿÿézÿÿÿfD  ÇF    éÖıÿÿ@ ‰ÂH‰ñè¶  ‹„$œ   ‹|$@A)ÅÇ‰|$\éÎıÿÿD  Ç„$€      D‹T$XÇD$`    E…Òyº   ÇD$X    )Â‰T$`‹D$T…À‰|  ‹D$TÇD$t    )D$`÷Ø‰D$h‹D$0ƒø	‡  ƒøĞ  AÀı  1ÀAø÷  –À‰„$ˆ   ‹D$0ƒø„ä  ƒø„,  Ç„$Œ       ƒø„Ò  ƒø…Ë  ‹D$TDğ‰„$„   ƒÀ…À‰D$P‰„$œ   ï  ‹L$Pè¶øÿÿH‰ÇA‹T$ƒê‰T$pt"¸   IÂƒå‰Á‰D$p„^  ¸   )È‰D$p‹D$Pƒø–Á"Œ$ˆ   „<  ‹T$pT$T….  D‹„$€   Ç„$œ       òD$xE…Àtò%ØO  f/à‡•  f(ÈòXÈòXÆO  fH~ÈH‰Â‰ÀHÁê ê  @HÁâ H	Ğ‹T$P…Ò„‘  D‹\$P1íL‹yR  fHnĞACÿH˜òAÂ‹„$Œ   …À„g  ò¡O  HGò,Ğò^Ëò\ÊfïÒò*ÒƒÂ0ˆò\Âf/È‡„  ò%.O  ò6O  ëJ@ ‹Œ$œ   QD9Ú‰”$œ   ’  òYÃfïÒHƒÀòYËò,Ğò*ÒƒÂ0ˆPÿò\Âf/È‡(  f(Ôò\Ğf/Êv¬¶Pÿés   ÇD$0    fïÀòA*ÇòYŸN  ò,ÈƒÁ‰Œ$œ   èôöÿÿD‹L$\H‰ÇE…Éˆà  HcD$TA9D$ŒĞ  H‹\Q  ÇD$p    ÇD$PÿÿÿÿòÂòD$xHGÇ„$œ      f(Èò^Êò,ÑfïÉò*ÊJ0ˆ‹L$TòYÊƒÁ‰L$Xò\ÁfïÉf.Áz„}  ò%N  fïÛëH„     òYÄƒÁHƒÀ‰Œ$œ   f(Èò^Êò,ÑfïÉò*ÊJ0ˆHÿòYÊò\Áf.Ãz„'  ‹Œ$œ   D‹T$PD9Ñu¯‹L$p…É„­  ƒùÇD$L   …ù  ¶Pÿ‹l$Të(ff.„     ff.„     fH9ù„L  ¶QÿH‰ÈHHÿ€ú9tçƒÂÇD$L    ˆM‰L$Xé¥  fD  fïÉò*Ïf.Èz„iúÿÿƒl$Té_úÿÿf.„     Ç„$ˆ       ƒèƒø‰D$0„   ƒø„h	  Ç„$Œ       ƒø„  ÇD$0   é8üÿÿ ƒl$TÇ„$€       évûÿÿ‹L$\E)ïA‹D$AW‰”$œ   D)ù9ÈC  ÇD$p    E1öÇ„$„   ÿÿÿÿÇD$Pÿÿÿÿ‹T$\D‹T$P)Âƒ|$0B‰„$œ   ŸÁE…ÒŸÂ„Ñt	D9Ğx  ‹T$`‹L$hD$XĞA‰×‰L$\‰D$`¹   èP  E…ÿH‰Åt)‹D$X…À~!‹L$XA9Ï‰ÈANÇ)D$`)Á‰„$œ   A)Ç‰L$X‹D$h…À…û  ÇD$h   ¹   è  ƒ|$0D‹T$tI‰ÁÂAƒı”À!ÂE…ÒA‰Õ…”  „Ò…S  A¼   ‹D$XA)Ä‹D$`AƒìAƒäD‰¤$œ   D‰âDà…À~‰ÂH‰ñL‰L$@èJ  ‹”$œ   L‹L$@H‰Æ‹D$XĞ…À‰Â~L‰Éè'  I‰Áƒ|$0D‹„$€   AŸÅE…À…J  ‹D$P…À  E„í„•  ‹D$P…À…¹  L‰ÉE1Àº   èi  H‰ñH‰ÂH‰D$0èù  L‹L$0…ÀŒ  HGÆ1L‰ÉH‰D$0èÈ  ‹D$TÇD$L    ƒÀH…í‰D$XH‹D$0tH‰éH‰D$0è  H‹D$0H9ÇrëfHƒèH9øt€xÿ0tñH‰ñH‰D$0èt  H‹t$ H‹D$0‹L$XÆ  ‰H‹t$(H…ötH‰‹D$L	é†øÿÿ…À…á  f(ÈòXÈòX)J  fH~ÈH‰Â‰ÀHÁê ê  @HÁâ H	Ğò\J  fHnÈf/Á‡^
+      fWJ  f/È‡Š  ÇD$p    D  D‹D$\E…Àˆ‚   ‹D$TA9D$|wL‹ L  HcD$TE…öòAÂ‰Eûÿÿ‹D$P…À9ûÿÿ…7  òY¢I  f/T$xƒ#  HGÆ11ÉH‰D$0ès  ‹D$TÇD$L    ƒÀ‰D$XH‹D$0é½şÿÿfD  ‹Œ$Œ   …É…é  ‹D$`…À„5  ‹D$X…À„)  D‹|$`‹L$XD‹\$hA9Ï‰ÈANÇA)Ç)ÁE…Û‰„$œ   D‰|$`‰L$Xt‹T$hH‰ñè,  D‹|$`ÇD$h    H‰Æ1íéúüÿÿÇ„$Œ      E…ö¸   AOÆ‰ÁA‰Æ‰„$„   ‰„$œ   èöğÿÿD‰t$PH‰Çé6øÿÿf„     D$X‰D$téFöÿÿ ‹D$TƒÀ‰D$X‹D$h…À„	  C<…Ò~H‰éL‰L$@è4  L‹L$@H‰Å‹D$tI‰í…À…  ƒ|$p¸   L‰L$@H‰|$`H‰\$h•D$\é¯   f.„     L‰ùè  º   E…äˆÊ  Dd$0uH‹D$8ö „µ  Lw…ÒM‰÷~€|$\ …[  ‹D$PAˆ^ÿ9„$œ   „‚  E1ÀH‰ñº
+       è  E1ÀL9íº
+       H‰ÆH‰é„3  èş  L‰éE1Àº
+       H‰Åèë  I‰Å‹„$œ   L‰÷ƒÀL‹|$@H‰ñ‰„$œ   L‰úè¤ğÿÿH‰êH‰ñX0A‰ÆèS  L‰ùL‰êA‰Äè¥  I‰Ç‹@…À…ÿÿÿL‰úH‰ñè,  L‰ù‰D$Tè  ‹T$T‹D$0	Â…”  H‹D$8‹ ‰D$TƒàD$p…åşÿÿA‰ØI‰úL‹L$@Aƒø9H‹|$`H‹\$h„/	  E…ä¬
+      EF1ÇD$L    IBI‰ìEˆL‰í€    L‰ÉH‰D$0è“  H…íH‹D$0„ìûÿÿM…ä„ÑûÿÿI9ì„ÈûÿÿL‰áèk  H‹D$0é¶ûÿÿèË  H‰ÅI‰ÅéØşÿÿL‰ÉèH  D‰ğ÷ØH…í‰D$X„	
+      H‰éè.  H‰øÇD$L   éûÿÿfD  ‹T$tL‰ÉèL  E„íI‰Á…r  ÇD$t    A‹AƒèH˜E½dAƒôéBúÿÿL‰ÊH‰ñL‰L$@èà  L‹L$@…À‰™úÿÿ‹D$TH‰ñE1Àº
+       ƒè‰D$Pè  ‹”$„   ‹L$hH‰ÆL‹L$@…ÒÀA!Å…É…7  E„í…n  ‹D$T‰D$X‹„$„   ‰D$Pf„     D‹d$PI‰ÿ¸   M‰Íë#fD  H‰ñE1Àº
+       è¨  H‰Æ‹„$œ   ƒÀL‰êH‰ñ‰„$œ   IƒÇèeîÿÿD@0EˆGÿD9¤$œ   |»M‰éE1ä‹D$p…À„V  ƒø„’  ƒ~;‹F…Àu4…À•À¶ÀÁà‰D$LL‰øé$şÿÿff.„     f„     I9ÿ„÷  L‰ø¶PÿMÿ€ú9tçƒÂÇD$L    Aˆéäıÿÿ@ Ç„$œ      ¹   è»ìÿÿH‰Çé ôÿÿÇD$p     ‹T$\E)ïA‹D$D)ú9Ğ{  ‹L$P‹D$hDAÿD9ÀŒ  D)À…É‰D$\‰©  Ç„$œ       D‹|$`‹D$PA)Çé×÷ÿÿ‹D$h…À…üúÿÿD‹|$`1íéøÿÿ‹D$\…Àt@H‰é‰Âè  H‰òH‰ÁH‰Åè¸  H‰ñH‰D$xè»  ‹D$\)D$hH‹t$x„Å÷ÿÿ„     ‹T$hH‰ñèÔ  ÇD$h   H‰Æé©÷ÿÿÇD$0   Ç„$Œ      éÙòÿÿ‹T$Té`ûÿÿ1ÉA÷ÖèY  AFÇD$L   ‰D$XH‰øéÀøÿÿÇ„$€       º   )Â‹D$T‰T$`‰D$X‰D$téİğÿÿ‹T$hD‰À¹   D‰D$\)ĞD$t‹D$PD$X‰„$œ   è  ‹T$`D‹D$\H‰Å…Ò…ş  ‹D$PE1ÿD‰D$h‰D$`é&ÿÿÿ‹T$0ƒêƒâı„uşÿÿé>öÿÿƒD$XÆ1ÇD$L    éûûÿÿH‰ñº   L‰L$0D‰D$8èd  H‹T$0H‰ÁH‰Æè„  L‹L$0…ÀÀıÿÿuD‹D$8Aƒà…¯ıÿÿƒ~L‰øÇD$L   ¡ûÿÿ‹Fé^ıÿÿf„     D‹\$pA‰ØI‰úL‹L$@H‹|$`H‹\$hE…Û„  ƒ~  ƒ|$p„S  H‰|$0M‰×D‰ÇH‰\$8L‰ËëH E1ÀL‰éAˆ~ÿº
+       è<
+      L9íH‰ñº
+       HDèE1ÀI‰Äè"
+      H‰ÚM‰÷H‰ÁH‰ÆM‰åèîêÿÿx0MwL‰êH‰Ùèœ  …À¨A‰øI‰ÙH‹|$0M‰úAƒø9H‹\$8„Õ  I‰ìAƒÀL‰íÇD$L    L‰ğEˆé®úÿÿ‹D$hÇD$p    E1öT$XÇD$PÿÿÿÿÇ„$„   ÿÿÿÿ‰D$\‹D$`A‰ÇĞ‰D$`éèôÿÿòYÓf(ÈH‰øòÿ@  A¸   E1Éë@ òYËAƒÀA‰Éò,ÑD‰„$œ   …Òtfïäò*âA‰Éò\ÌHƒÀƒÂ0ˆPÿD‹„$œ   E9Øu¿E„Éuf(ÈòÎ@  f(ÚòXØf/Ë‡,óÿÿò\Âf/Á‡i  D‹|$\E…ÿˆ  A‹l$…íˆ  òAÇD$p    éêñÿÿA‹D$ƒÀ9D$@›ôÿÿƒD$`ÇD$t   ƒD$Xé„ôÿÿ„     ‹ML‰L$@è  HUHHI‰ÄHcEL…   è7  º   L‰áèÊ  L‹L$@I‰Åé ÷ÿÿ‹L$`D‰D$hD‹T$X‹T$PD9ÑD‰ĞNÁÊA)Â)Á)Â‰„$œ   A‰ÏD‰T$X‰T$`éüÿÿHGÆ11ÉH‰D$0è  H‹D$0ÇD$X   ÇD$L    éÛôÿÿA‰ØI‰úL‹L$@Aƒø9H‹|$`H‹\$h„¿  AƒÀI‰ìL‰ğÇD$L    EˆL‰íé˜øÿÿA‰ØI‰ìL‹L$@L‰íH‹|$`H‹\$héúÿÿÆ0ƒÅ¶Pÿéµñÿÿ…Ò~YH‰ñº   L‰L$0L‰T$@D‰D$8èÌ  H‹T$0H‰ÁH‰Æèì  L‹L$0…ÀD‹D$8L‹T$@p  Aƒø9„  EF1ÇD$p    ƒ~  ÇD$L   MrI‰ìL‰íé5ıÿÿA‹D$ƒÀ9D$@|øÿÿƒD$`ÇD$t   ƒD$XémøÿÿD  D‹œ$„   E…ÛbôÿÿòYG>  ½ÿÿÿÿòB>  òYÈòX&>  fH~ÈH‰Â‰ÀHÁê ê  @HÁâ H	Ğénîÿÿ‹D$P‰D$T‹„$„   ‰D$PéáòÿÿòXÀf/Â‡Vğÿÿf.ÂÇD$L   Š=óÿÿ…7óÿÿ€â„.óÿÿé0ğÿÿ1ÒfïÉf.Á¹   šÂEÑÁâ‰T$LU‰T$XéóÿÿMrI‰ìL‰íM‰÷AÆ9éİøÿÿD‹\$\E…ÛˆùÿÿE‹L$ÇD$p    E…É‰ óÿÿéùÿÿÇD$p    éôÿÿE1ÀH‰éº
+       è®  E„íL‹L$@H‰Å…ÿÿÿ‹D$T‰D$X‹„$„   ‰D$Pé¬ôÿÿ1ÒfïÀf.È¹   šÂEÑMÁâ‰T$L‰L$XéTòÿÿ‹N…É…ßúÿÿ…ÒÒıÿÿMrI‰ìL‰íérûÿÿ‹D$P‹T$hD@ÿD9ÂŒœùÿÿ‹L$`D)Â‰„$œ   D$X‰T$\ÈA‰Ï‰D$`éhğÿÿ‹FI‰ìL‰í…Àt`ÇD$L   MréûÿÿL$X‰È‰Œ$œ   ‹L$`ÈA‰Ï‰D$`é+ğÿÿu
+    AöÀ…„ıÿÿÇD$p    éıÿÿMrI‰ìL‰íéşÿÿA÷ÖéÌøÿÿ‹D$pMr‰D$Lé»úÿÿƒ~ÇD$L   Nõÿÿ1Àƒ~ •ÀÁà‰D$Lé9õÿÿf.„     f.„     f.„     fATUWVSHcY‰ÕI‰ÊÁı9ëAÇB    AÇB    [^_]A\Ã LaHcíƒâMœI4¬t|D‹LF¿    ‰Ñ)×AÓéM9Øƒ    L‰æff.„     ff.„     €    A‹ ‰ùHƒÆIƒÀÓà‰ÑD	È‰FüE‹HüAÓéM9ØrİH)ëE…ÉIDœüD‰t*HƒÀë$€    L9ŞL‰çƒJÿÿÿ@ ¥L9ŞrúH)ëIœL)àHÁø…ÀA‰B„.ÿÿÿ[^_]A\Ãf„     E…ÉE‰J„	ÿÿÿL‰àë¡ff.„      HcQHAH1ÒH9Èrë)ff.„     HƒÀƒÂ H9ÈsD‹ E…ÀtìH9Ès¼ Â‰ĞÃWVSHƒì ‹ã‹  ƒø‰Î„¸   …Àt<ƒøu*H‹   „     ¹   ÿÓ‹³‹  ƒøtîƒø„…   HƒÄ [^_ÃD  ¸   ‡‹  …ÀuIH’‹  H‹=+  H‰Ùÿ×HK(ÿ×HY   èÄoÿÿÇZ‹     H‰ñH÷Ùƒá(HÙHƒÄ [^_Hÿ%à  HI‹  ƒøtĞ‹.‹  ƒø„VÿÿÿérÿÿÿH)‹  ë½€    SHƒì ¸   ‡ ‹  ƒøtHƒÄ [ÃD  H‹  HòŠ  ÿÓH‹  H‰ØHƒÄ [Hÿàff.„      VSHƒì8‰Ë1ÉèÁşÿÿƒû	DHUŠ  HcËH‹ÊH…À„…   L‹ ƒ=‹Š  L‰ÊuaH‰D$(H‰Š  ÿ3  H‹D$(ëH@ ‰Ù¾   ÓæFÿH˜H…'   HÁé‰ÉHÁáè»  H…Àt"ƒ=7Š  fnÃfnÎfbÁfÖ@tŸHÇ@    HƒÄ8[^ÃD  L¹€  ‰Ù¾   ÓæFÿH˜H…'   H‹  HÁéH‰ÂL)ÂHÁúHÊHú   w†HÈH‰÷  ë‡D  SHƒì H…ÉH‰Ët9ƒy	~HƒÄ [éÛ   1Éè©ıÿÿHcSH>‰  ƒ=‡‰  H‹ĞH‰ĞH‰t
+    HƒÄ [Ã@ Hy‰  HƒÄ [Hÿ%œ  ff.„     fUWVSHƒì(‹yH‰ËIcğHcÒ1Éf.„     ‹D‹H¯ÂHğH‰Æ‰D‹HƒÁHÁî 9ÏâH…öH‰İt9{~%HcÇƒÇH‰İ‰tƒ‰{H‰èHƒÄ([^_]Ãf„     ‹CHèşÿÿH…ÀH‰ÅtØHHHcCHSL…   è4  H‰ÙH‰ëèéşÿÿHcÇƒÇH‰İ‰tƒ‰{ë¢€    SHƒì0‰Ë1Éè’üÿÿH‹3ˆ  H…Àt.H‹ƒ=lˆ  H‰ˆ  tcH‹<8  ‰XH‰PHƒÄ0[Ã€    H‹q  Hê~  H‰ÂH)ÊHÁúHƒÂHú   vC¹(   è‘  H…Àt¿H‹å7  ƒ=ˆ  H‰PuH‰D$(Hˆ  ÿ®š  H‹D$(ë„€    HP(H‰  ë¿ AWAVAUATUWVSHƒì(LciHcjI‰ÌI‰×A9í|‰èI‰ÏIcíI‰ÔLcèB\- A9_A‹O}ƒÁèÈüÿÿH…ÀH‰Ç„ß   LXHcÃI4ƒI9ós#H‰ğL‰Ù1ÒH)øHƒèHÁèL…   èÔ  I‰ÃML$O$©MwM9áI,®sxH‰èL)øIƒÇLhç1ÀIƒåüL9ıLBèëfD  IƒÃM9ásLE‹IƒÁE…ÒtëL‰ÙL‰òE1Àf‹HƒÂHƒÁD‹yüI¯ÂLøLÀI‰À‰AüIÁè H9êrÙG‰D+IƒÃM9ár´…ÛëD  ƒët‹FüHƒî…Àtğ‰_H‰øHƒÄ([^_]A\A]A^A_Ãf„     UWVSHƒì(‰ĞH‰Í‰Óƒà…¨   ÁûH‰î…Û„Ä   H‹=ã|  H…ÿu+éë   ff.„     ff.„      H‹7ÑûH…öt2H‰÷öÃtîH‰úH‰éèCşÿÿH…ÀH‰ÆtsH‰éèCüÿÿÑûtiH‰õH‹7H…öuÎ¹   èúùÿÿH‹7H…ötbƒ=Û…  u³H
+    †  ÿŒ˜  ë¤f.„     HI4  ƒèE1ÀH˜‹‚èYüÿÿH…ÀH‰Å…5ÿÿÿD  1öH‰ğHƒÄ([^_]Ãf.„     H‰úH‰ùè¥ıÿÿH…ÀH‰ÆH‰tÒHÇ     é|ÿÿÿ¹   èdùÿÿH‹=İ{  H…ÿtƒ=A…  …ÿÿÿHl…  ÿî—  éÿÿÿ¹   è_úÿÿH…ÀH‰ÇtH¸   q  H‰=–{  H‰GHÇ    ë±HÇ~{      1öéQÿÿÿ€    AVAUATUWVSHƒì I‰Ì‰Ö‹I‰ÕA‹\$ÁşA‹D$óDkA9Å~
+    ÀƒÁA9ÅöèáùÿÿH…ÀI‰Æ„»   Hx…ö~HÁæH‰ù1ÒI‰ğH÷è  IcD$It$ƒåL†„¢   Aº    I‰ø1ÒA)êff.„     ff.„     ff.„      ‹‰éIƒÀHƒÆÓàD‰Ñ	ĞA‰@ü‹VüÓêL9ÎrßIL$L‰ÈL)àHƒèHƒàüI9É¹    HBÁ…ÒAEİ‰TA‰^L‰áèúÿÿL‰ğHƒÄ [^_]A\A]A^Ã„     ¥L9ÎsÔ¥L9ÎrôëÌfHcBD‹IA)ÁuOL…    HƒÁJJTë!ff.„     ff.„     fD  H9ÁsHƒèHƒêD‹D9tëEÉAƒÉD‰ÈÃATUWVSHƒì HcB‹yH‰ËH‰Ö)Ç…i  H…    HIHHTëf.„     H9ÁƒW  HƒèHƒêD‹D9 tçƒi  ¿   ‹Nè$øÿÿH…ÀI‰Á„û   ‰xHcFHn¹   Iy1ÒLD… I‰ÂHcCLdƒD‹‹L)ØH)ĞH‰ÂA‰	HƒÁA‰ÃHHÁê ƒâL9àrÕL‰à1ÉH)ØHƒÃHƒèHƒàüI9ÜHBÁLdH8H)ïM9ÄHsL‰áH‰ØsQff.„     ff.„     f„     H9H‰ÈHƒÁ‹ H)ĞH‰ÂA‰Ã‰HÁê ƒâL9ÁrÜI@ÿL)àHƒàüHğE…Ûuf„     ‹PüHƒèAƒê…ÒtñE‰QL‰ÈHƒÄ [^_]A\Ã€    ¿   ˆÑşÿÿH‰ÎH‰Ó1ÿéÄşÿÿ1ÉèéöÿÿH…ÀI‰ÁtÄHÇ@   L‰ÈHƒÄ [^_]A\Ã H‰ğH‰ŞH‰Ãéşÿÿf.„     WVSHcALQI‚D‹[üHsüA½Ë‰Ï¹    ƒ÷A‰ÈA)øƒÿ
+    D‰~}DOõI9òsTE…É‹SøtSD)ÉD‰Ø‰ÖA‰ÈD‰ÉÓàD‰ÁÓîD‰É	ğÓâHKø  ğ?HÁà I9Ês1D‹KôD‰ÁAÓéD	ÊH	ĞfHnÀ[^_ÃD  1ÒƒÿuYD‰Ø  ğ?HÁà H	ĞfHnÀ[^_Ã¹   D‰ØE1À)ùÓè  ğ?HÁà I9òsD‹CøAÓèOD‰ÚÓâD	ÂH	ĞfHnÀ[^_ÃD  D‰ØD‰É1ÒÓà  ğ?HÁà H	ĞfHnÀ[^_ÃVSHƒì8)t$ ¹   L‰Æf(ğH‰ÓèõÿÿH…ÀI‰ÀtYfH~ğH‰ÁHÁé ‰ÊÁéâÿÿ áÿ  A‰ÉtGÊ   …À…É   ¼Ê¸5   AÇ@   DQ ÓêA‰PD)ĞC”Íûÿÿ‰‰(t$ L‰ÀHƒÄ8[^Ã…Àu<¼ÊAÇ@   ¸    D‰îûÿÿÓêA‰P½ÒD‰ƒò)Ğ‰(t$ L‰ÀHƒÄ8[^Ã D¼ÈD‰ÉÓèE…É…¶   fnÀfnÒ…ÒfbÂfAÖ@…Ü   ¸   º   A‰@‰ĞAé2  A‹TÁàë” D¼ĞD‰ÑÓèE…ÒtBA‰ÓAÓë¹    D)ÑfAnÛÓâ	ÂAƒû¸   ƒØÿfnÂA‰@¸5   fbÃD)ĞfAÖ@éÿÿÿfnÀfnÊ¸5   AÇ@   fbÁfAÖ@éàşÿÿ@ A‰ÒAÓê¹    D)ÉfAnâÓâ	ÂE…ÒfnÂfbÄfAÖ@„6ÿÿÿ¸   º   é1ÿÿÿ AÇ@   ¸@   A¹ÎûÿÿéÁşÿÿH‰ÈHJ¶„Òˆt!ff.„     D  ¶HƒÀHƒÁ„ÒˆuïÃE1ÀH…ÒH‰Èu$ë'ff.„     „     HƒÀI‰ÀI)ÈI9Ğs€8 uìL‰ÀÃE1ÀH…ÒH‰Ğuë'ff.„     „     IƒÀL9ÀtfBƒ<A uïL‰ÀÃH‹9.  H‹ ÃH‹	.  H‹ ÃSHƒì H‰Ë1Éèá   H9Ãr¹   èÒ   H9ÃvHK0HƒÄ [Hÿ%ı  D  1Éè±   H‰ÂH‰ØH)ĞHÁøiÀ«ªªªHè  K €  HƒÄ [Ãf„     SHƒì H‰Ë1Éèq   H9Ãr¹   èb   H9ÃvHK0HƒÄ [Hÿ%­  D  cÿÿÿ1Éè:   H)ÃHÁûiÛ«ªªªKHƒÄ [é°  H‹)}  Ã„     H‰ÈH‡}  ÃSHƒì ‰Ëè4  ‰ÙHIHÁâHĞHƒÄ [ÃHƒìXE…ÀH‰Èf‰T$hD‰Áufúÿ wYˆ¸   HƒÄXÃf„     HT$LD‰L$(A¹   H‰T$8LD$h1ÒÇD$L    HÇD$0    H‰D$ ÿ  …Àt‹T$L…Òt®èÏ  Ç *   ¸ÿÿÿÿHƒÄXÃ€    WVSHƒì0H…ÉH‰Ë‰ÖHD$+HDØèc  ‰ÇèT  ·ÖA‰ùH‰ÙA‰Àè;ÿÿÿH˜HƒÄ0[^_ÃAVAUATUWVSHƒì0E1öI‰ÔH‰ËL‰Åè  ‰Æè  M‹,$‰ÇM…ítHH…ÛtZH…íu é   H˜HÃIÆ€{ÿ „   IƒÅI9îsuA·U A‰ùA‰ğH‰ÙèÂşÿÿ…ÀÎIÇÆÿÿÿÿL‰ğHƒÄ0[^_]A\A]A^ÃD  Hl$+ëf„     HcĞƒèH˜IÖ€|+ t>IƒÅA·U A‰ùA‰ğH‰éègşÿÿ…ÀÓë£M‰,$ë£f.„     IÇ$    Iƒîë‹fIƒîëƒWSHƒìHH…ÒH‰ÏH‰Ó„À   M…À„&  ¶A‹AÇ    „Ò‰D$<„™   ƒ¼$ˆ   vw„À…—   ‹Œ$€   L‰L$xL‰D$pÿ  …ÀtTL‹D$pL‹L$xIƒø„Æ   H‰|$ A¹   I‰ØÇD$(   ‹Œ$€   º   ÿØŒ  …À„„   ¸   HƒÄH[_Ã@ ‹„$€   …Àu=¶f‰¸   ë1Òf‰1ÀHƒÄH[_ÃfˆT$=A¹   ÇD$(   LD$<H‰L$ ëf‹Œ$€   H‰|$ A¹   I‰ØÇD$(   º   ÿPŒ  …ÀuèG  Ç *   ¸ÿÿÿÿë™¶Aˆ¸şÿÿÿëŒD  ATUWVSHƒì@1ÀH‰ËH…Éf‰D$>L‰ÎHD$>H‰×L‰ÅHDØèÂ  A‰Äè²  H…öD‰d$(I‰èL y  ‰D$ H‰úH‰ÙLEÎèUşÿÿH˜HƒÄ@[^_]A\Ã„     AVAUATUWVSHƒì@H_y  M…ÉL‰ÏH‰ÖHDøH‰ËL‰ÅèK  A‰ÅèK  H…öA‰Ä„Ç   H‹H…Ò„»   H…ÛtnE1öH…íuëJ@ H‹H˜HƒÃIÆHÂI9îH‰s/I‰èD‰d$(I‰ùH‰ÙM)ğD‰l$ è®ıÿÿ…ÀÊI9îs…ÀuHÇ    L‰ğHƒÄ@[^_]A\A]A^Ã„     1ÀD‰åE1öf‰D$>H\$>ë@ H‹H˜IÆLòD‰d$(I‰ùI‰èD‰l$ H‰ÙèEıÿÿ…ÀÙë¥€    E1öë™ UWVSHƒìH1ÀH‰ÎH‰×L‰Ãf‰D$>èS   ‰ÅèD   H…Û‰l$(I‰øH+x  ‰D$ HDÚH‰òHL$>I‰ÙèãüÿÿH˜HƒÄH[^_]Ãÿ%‚Š  ÿ%‚Š  ÿ%‚Š  ÿ%‚Š  ÿ%ŠŠ  ÿ%ŠŠ  ÿ%ŠŠ  ÿ%ŠŠ  ÿ%ŠŠ  ÿ%’Š  ÿ%¢Š  ÿ%¢Š  ÿ%¢Š  ÿ%¢Š  ÿ%¢Š  ÿ%¢Š  ÿ%¢Š  ÿ%¢Š  ÿ%ªŠ  ÿ%ªŠ  ÿ%ªŠ  ÿ%ªŠ  ÿ%ªŠ  ÿ%ªŠ  ÿ%ªŠ  ÿ%ªŠ  ÿ%ªŠ  ÿ%ªŠ  ÿ%ªŠ  ÿ%ªŠ  ÿ%ªŠ  ÿ%ªŠ  ÿ%ªŠ  ÿ%ªŠ  ÿ%ªŠ  ÿ%ªŠ  ÿ%ªŠ  ÿ%ªŠ  ÿ%ªŠ  ÿ%ªŠ  ÿ%ªŠ  ÿ%ªŠ  ÿ%ªŠ  ÿ%ªŠ  ÿ%ªŠ  „     ÿ%‰  ÿ%òˆ  ÿ%âˆ  ÿ%Òˆ  ÿ%Âˆ  ÿ%²ˆ  ÿ%¢ˆ  ÿ%’ˆ  ÿ%‚ˆ  ÿ%rˆ  ÿ%bˆ  ÿ%Rˆ  ÿ%Bˆ  „     éZÿÿ                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                pĞ @           tĞ @          wĞ @          {Ğ @          ‚Ğ @          …Ğ @          ŠĞ @                         €ã @           ÿÿÿÿÿÿÿÿ                       ÿÿÿÿ            @   Ã¿ÿÿÀ?                    `&@            ² @           ² @           ² @    ² @   ğ² @    ³ @   ³ @                                                                                                                                                                                                           rb Failed to open file Failed to allocate buffer start.jminus   ---- SOURCE START ----
+    %s
+    ---- SOURCE END ----
+     let fn yap return if else while 
+    !!! Lexing error: unexpected characters found in source code!
+       -> Unexpected character '%c' at line %d
+          
+    Hint: Check your source file.
+    
+        ŸLÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿ+Pÿÿ˜PÿÿßJÿÿJÿÿ¾OÿÿrJÿÿßQÿÿLKÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿQOÿÿ…Mÿÿ¹KÿÿkNÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿßQÿÿQÿÿßQÿÿrQÿÿLET FN YAP RETURN IF WHILE ELSE IDENTIFIER INT FLOAT ASSIGN PLUS MINUS STAR SLASH EQUAL BANG BANG_EQUAL LESS LESS_EQUAL GREATER GREATER_EQUAL LPAREN RPAREN LBRACE RBRACE COMMA SEMICOLON EOF UNKNOWN ???   Rÿÿ(Rÿÿ@RÿÿLRÿÿdRÿÿXRÿÿ4RÿÿpRÿÿ|RÿÿˆRÿÿ”Rÿÿ Rÿÿ¬Rÿÿ¸RÿÿÄRÿÿĞRÿÿÜRÿÿåRÿÿîRÿÿ÷Rÿÿ Sÿÿ	SÿÿSÿÿSÿÿ$Sÿÿ-Sÿÿ6Sÿÿ?SÿÿHSÿÿQSÿÿ[Line %d] %-15s %s
+     Memory allocation failed
+           Expected ')' after expression
+     Unexpected token: %s
+     Invalid assignment target.
+            Expected variable name after 'let'
+         Expected '=' after variable name
+           Expected ';' after let initializer
+     Expected '(' after 'yap'
+       Expected ')' after yap expression
+          Expected ';' after yap statement
+     Expected '(' after 'if'
+     Expected ')' after condition
+     Expected '(' after 'while'
+        Expected ')' after while condition
+     Expected '}' after block
+       Expected ';' after expression
+        Literal: %s
+     Variable: %s
+     Binary: %s
+     Call:
+     ExprStmt:
+     LetStmt: %s
+     YapStmt:
+     IfStmt:
+     Condition:
+     Then:
+     Else:
+     WhileStmt:
+     Body:
+     BlockStmt:
+     ¡_ÿÿÕ_ÿÿ`ÿÿH`ÿÿaÿÿŒaÿÿ            Undefined variable: %s
+     + - * / == != < <= > >= = Invalid assignment target
+     Unknown binary operator: %s
+     Unknown expression type
+     Assigned variable %s = %d
+     Yap output: %d
+     Re-assigned variable %s = %d
+     If condition: %d
+     While condition true
+     Unhandled statement type
+       TfÿÿÙeÿÿ(fÿÿúfÿÿgÿÿ—gÿÿ        + - * / == != < <= > >= Unknown binary operator: %s
+     Unhandled expr type
+     Unhandled stmt type
+      ©lÿÿPlÿÿ…lÿÿ
+    mÿÿòmÿÿÍlÿÿ        Stack overflow
+     Stack underflow
+     %d
+     Unknown opcode %d
+     Oqÿÿqqÿÿ”qÿÿ¶qÿÿÚqÿÿüqÿÿrÿÿBrÿÿjrÿÿ’rÿÿºrÿÿârÿÿ
+    sÿÿTsÿÿjsÿÿ/sÿÿMsÿÿ¨sÿÿpM @                            P@   P@   ,%@   Àã @                                   Argument domain error (DOMAIN) Argument singularity (SIGN)      Overflow range error (OVERFLOW) Partial loss of significance (PLOSS)    Total loss of significance (TLOSS)      The result is too small to be represented (UNDERFLOW) Unknown error     _matherr(): %s in %s(%g, %g)  (retval=%g)
+      ˜tÿÿLtÿÿäsÿÿltÿÿ|tÿÿŒtÿÿ\tÿÿMingw-w64 runtime failure:
+         Address %p has no image-section   VirtualQuery failed for %d bytes at address %p          VirtualProtect failed with code 0x%x    Unknown pseudo relocation protocol version %d.
+             Unknown pseudo relocation bit size %d.
+           %d bit pseudo relocation at %p out of range, targeting %p, yielding the value %p.
+          0yÿÿ0yÿÿ0yÿÿ0yÿÿ0yÿÿ„yÿÿ0yÿÿğyÿÿ„yÿÿ¾yÿÿ        (null)  ( n u l l )   NaN Inf   %¤ÿÿ0 ÿÿ0 ÿÿ?¤ÿÿ0 ÿÿ\¤ÿÿ0 ÿÿœ¤ÿÿ0 ÿÿ0 ÿÿ¥ÿÿL¥ÿÿ0 ÿÿi¥ÿÿ†¥ÿÿ0 ÿÿ¢¥ÿÿ0 ÿÿ0 ÿÿ0 ÿÿ0 ÿÿ0 ÿÿ0 ÿÿ0 ÿÿ0 ÿÿ0 ÿÿ0 ÿÿ0 ÿÿ0 ÿÿ0 ÿÿ0 ÿÿ0 ÿÿ0 ÿÿ¿¥ÿÿ0 ÿÿp¦ÿÿ0 ÿÿ§¦ÿÿØ¦ÿÿ	§ÿÿ0 ÿÿòŸÿÿ0 ÿÿ0 ÿÿâ¢ÿÿ0 ÿÿ0 ÿÿ0 ÿÿ0 ÿÿ0 ÿÿ0 ÿÿh¡ÿÿ0 ÿÿ0 ÿÿ0 ÿÿ0 ÿÿ  ÿÿ0 ÿÿ0 ÿÿ0 ÿÿ0 ÿÿ0 ÿÿ0 ÿÿ0 ÿÿ0 ÿÿ)¢ÿÿ0 ÿÿå¡ÿÿ¡ÿÿ{£ÿÿù¢ÿÿ*£ÿÿ[£ÿÿ¡ÿÿ ¡ÿÿ0 ÿÿÊ£ÿÿ¬£ÿÿê£ÿÿ  ÿÿ´¡ÿÿ0 ÿÿ0 ÿÿº¢ÿÿ ¡ÿÿ  ÿÿ0 ÿÿ0 ÿÿ  ÿÿ0 ÿÿ ¡ÿÿ    Infinity NaN 0        ø?aCoc§‡Ò?³È`‹(ŠÆ?ûyŸPDÓ?ú}-”<2ZGUDÓ?      ğ?      @      $@      @      @               €              à?                              }                             ğ?      $@      Y@     @@     ˆÃ@     jø@    €„.A    ĞcA    „×—A    eÍÍA    _ B   èvH7B   ¢”mB  @åœ0¢B  Ä¼ÖB  4&õkC €à7yÃAC  Ø…W4vC ÈNgmÁ«C =‘`äXáC@Œµx¯DPïâÖäKD’ÕMÏğ€D        ¼‰Ø—²Òœ<3§¨Õ#öI9=§ôDı¥2—ŒÏº[%Co¬d(È
+                             €à7yÃACnµµ¸“Fõù?éO8M20ùHw‚Z<¿sİOu                      À @           °À @           `ã @              @           `ã @           `ã @           àØ @           ØB@           C@           C@            C@           hC@           @%@           (%@           $%@            %@           €%@           ğ$@           ø$@           `Ş @           ˆã @           ˜ã @            ã @           °ã @           0%@            %@           p%@           ÀT @           N @           %@           GCC: (x86_64-posix-seh-rev2, Built by MinGW-Builds project) 14.2.0              GCC: (x86_64-posix-seh-rev2, Built by MinGW-Builds project) 14.2.0              GCC: (x86_64-posix-seh-rev2, Built by MinGW-Builds project) 14.2.0              GCC: (x86_64-posix-seh-rev2, Built by MinGW-Builds project) 14.2.0              GCC: (x86_64-posix-seh-rev2, Built by MinGW-Builds project) 14.2.0              GCC: (x86_64-posix-seh-rev2, Built by MinGW-Builds project) 14.2.0              ÿÿÿÿÿÿÿÿº @           ÿÿÿÿÿÿÿÿ                0 @                    @                   pM @   @M @                                                             .    0  y    €  Ğ    Ğ  í  $  ğ    D    $  d  0  <  l  @  A  p  P  ¤  t  ¤  –  €  –  3  Œ  3    ˜     t  ¤  t  ó  °  ó  w  ¼  w  ì$  È  ì$  L%  Ø  L%  Ç&  ä  Ç&  	'  ì  '  S'  ü  S'  §'   §'  ğ'   ğ'  =(   =(  n(  $ n(  ¨(  , ¨(  õ(  8 õ(  ,)  D ,)  ›)  P ›)  ö*  \ ö*  +,  l +,  c,  x c,  ›,  „ ›,  á,   á,  -  œ -  .  ¨ .  -/  ´ -/  0  À 0  1  Ì 1  ë1  Ø ë1  Ä2  ä Ä2  ¸3  ğ ¸3  C4  ü C4  z4   z4  â5   â5  {8    €8  Ã8  , Ã8  9  8 9  ±9  D ±9  v:  P v:  Q=  \ Q=  ¬?  h ¬?  ÷?  t  @  C@  € C@  é@  Œ é@  “A  ˜ “A  SD  ¤ SD  àF  ° àF  µG  ¼ µG  óG  È  H  CH  Ô CH  —H  à —H  I  ì I  qI  ø qI  KL   PL  ŠL   L  M   M  /M  ( 0M  3M  , @M  oM  0 pM  ñM  8  N  N  D N  O  H O  O  `  O  ‰O  d O  òP  p  Q  gT  | pT  ®T  ” °T  ¼T  œ ÀT  }V    €V  ğV  ¨ ğV  _W  ¸ `W  áW  Ä ğW  âX  Ğ  Y  Y  Ø Y  Y  à  Y  LY  è PY   Y  ì  Y  =Z  ğ @Z  ÀZ  ü ÀZ  ÷Z     [  s[   €[  ¶[   À[  I\   P\  ]   `]  ¡]   À]  ¬^    °^  _  ( _  `  0  `  äa  H ğa  7b  T @b  Êb  ` Ğb  ıh  h  i  ¬l  € °l  şm  ˜  n  (r  ¬ 0r  ür  ¼  s  ›s  È  s  {t  Ô €t  Øu  à àu  Ïz  ğ Ğz  =†   @†  †   €†  ‡  $ ‡  7‡  0 @‡  íˆ  4  ‰  ¢  L @¢  R£  d `£  ¡£  t À£  ™¤  x  ¤  â¤  „ ğ¤  ë¥  Œ ğ¥  S¦  ˜ `¦  §     §  İ§  ° à§  '©  ¸ 0©  Éª  Ğ Ğª  ş«  à  ¬  `¬  ô `¬  6®  ø @®  O¯   P¯  @±   @±  r±  $ €±  ¸±  ( À±  õ±  ,  ²  ²  0 ²  ²  4  ²  ‡²  8 ²  ğ²  @ ğ²  ø²  H  ³  ³  L ³  /³  P 0³  ¹³  X À³  ÿ³  `  ´  ö´  l  µ  K¶  € P¶  ¸¶  Œ À¶  Í·  œ Ğ·  (¸  ° º  º  À                                                                                                                                                                                                                                                             B   b  
+     
+    20`pPÀ	 B  0¸     Ô  ç  ÀT  ç  	 B  0¸     ô    ÀT     B        5b0PrP  RP  ’P  5b0PRP  rP  •	 0P  RP  P%20`P  RP  5b0PPPP2P  2P  rP  RP  •	 0P   PRP  RP  RP  RP  òP  ÒP  rP  ²P  ’P  U¢0PrP  5b0PRP  RP  RP  RP  5b0PRP  5b0PrP  ²P  RP  RP  %B0P%B0PrP  rP  5b0P2P  RP  5b0P2P  2P  •	 0P   B   B0`         B   B0`     	 ˆ x h â0`      b0`   ’0`p
+    E‚0`
+    p	ÀĞàğP ¢      20
+     
+    20`pPÀ 20`p B0`   20 B   B         20`p                   R0`p Â   20	 ‚0`
+    p	PÀĞàğ   20`p B0`   b  
+    5b0`
+    p	ÀĞàğP
+    %B0`
+    p	ÀĞàğP5
+    R0`pÀP   B0`pP   20`p ¢0`   ¢0`   ¢0`pP   ¢0`pPÀĞ  
+      0`
+    p	PÀĞàğ 20 20`p   	 b0`
+    p	PÀĞàğ  
+      0`
+    p	PÀĞàğ 0`pPÀ      20`p 20 b0`   20 B0`pP   R0	 B0`
+    p	PÀĞàğ   B0`pP   2
+    0	`pPÀĞà   
+     
+    20`pPÀ 0`p   h b0`                  20 20       20 ¢   R0`p R
+    0	`pPÀĞà ‚0p  
+     
+    r0`pPÀ r
+    0	`pPÀĞà ‚0`pP                                                                                                                                                                                                                                                                                                                                 @@         ÀG HB °@         ˜H ¸B                         PD     hD     €D     D     ¬D     ÀD     ØD     îD     E     E     "E     4E     DE             ZE     rE     ˆE     E     ®E     ºE     ÈE     ÚE     îE     üE     F     F     F     $F     .F     :F     BF     LF     VF     `F     hF     pF     zF     ‚F     ŒF     ”F     F     ¦F     ®F     ¶F     ¾F     ÆF     ĞF     ÚF     äF     îF     üF     G     G     G     $G     .G     8G     BG     LG     XG     bG     lG     vG     ‚G             PD     hD     €D     D     ¬D     ÀD     ØD     îD     E     E     "E     4E     DE             ZE     rE     ˆE     E     ®E     ºE     ÈE     ÚE     îE     üE     F     F     F     $F     .F     :F     BF     LF     VF     `F     hF     pF     zF     ‚F     ŒF     ”F     F     ¦F     ®F     ¶F     ¾F     ÆF     ĞF     ÚF     äF     îF     üF     G     G     G     $G     .G     8G     BG     LG     XG     bG     lG     vG     ‚G             %DeleteCriticalSection KEnterCriticalSection  „GetLastError  ’InitializeCriticalSection ­IsDBCSLeadByteEx  ğLeaveCriticalSection  $MultiByteToWideChar ”SetUnhandledExceptionFilter ¤Sleep ÈTlsGetValue ÷VirtualProtect  ùVirtualQuery  .WideCharToMultiByte Y __C_specific_handler  m ___lc_codepage_func p ___mb_cur_max_func   __getmainargs ‚ __initenv ƒ __iob_func  “ __set_app_type  • __setusermatherr  ¶ _amsg_exit  Ë _cexit  Ş _commode  _errno  _exit B_fmode  _initterm _lock µ_onexit (_strdup ˆ_unlock gabort uatoi  xcalloc  „exit  ˆfclose  –fopen ˜fprintf šfputc fread ¡free  ¥fseek ¨ftell «fwrite  ¶isalnum ·isalpha ¿isspace Ólocaleconv  Úmalloc  ämemcpy  æmemset  êperror  ørealloc ürewind  signal  strcmp  +strerror  -strlen  0strncmp 1strncpy Tvfprintf  mwcslen   @  @  @  @  @  @  @  @  @  @  @  @  @ KERNEL32.dll    @ @ @ @ @ @ @ @ @ @ @ @ @ @ @ @ @ @ @ @ @ @ @ @ @ @ @ @ @ @ @ @ @ @ @ @ @ @ @ @ @ @ @ @ @ @ @ @ @ @ msvcrt.dll                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               À  (        0 @ P ` € à ğ  ¡¡¡ ¡(¡0¡ Ğ      à¨ ©©©© ¯°¯À¯Ğ¯à¯ğ¯   à  D        0 @ P ` p €    ° À Ğ à ğ  ¡¡ ¡0¡@¡P¡`¡p¡h££¨£À£È£                                                                                                                                                                                                                                                                                                                                                                                      ,              ] @   2                           (                                                                                                                                                                                                                                                                                                                                                                                                                                                                        $             ] @   2    8   ™   €8      GNU C17 14.2.0 -mtune=core2 -march=nocona -g -g -g -O2 -O2 -O2 -fno-ident -fbuilding-libgcc -fno-stack-protector ú   ™   \   char long long unsigned int long long int short unsigned int int long int unsigned int long unsigned int unsigned char long double double float E  	short int ix86_tune_indices ç   &Š  X86_TUNE_SCHEDULE  X86_TUNE_PARTIAL_REG_DEPENDENCY X86_TUNE_SSE_PARTIAL_REG_DEPENDENCY X86_TUNE_SSE_PARTIAL_REG_FP_CONVERTS_DEPENDENCY X86_TUNE_SSE_PARTIAL_REG_CONVERTS_DEPENDENCY X86_TUNE_DEST_FALSE_DEP_FOR_GLC X86_TUNE_SSE_SPLIT_REGS X86_TUNE_PARTIAL_FLAG_REG_STALL X86_TUNE_MOVX X86_TUNE_MEMORY_MISMATCH_STALL 	X86_TUNE_FUSE_CMP_AND_BRANCH_32 
+    X86_TUNE_FUSE_CMP_AND_BRANCH_64 X86_TUNE_FUSE_CMP_AND_BRANCH_SOFLAGS X86_TUNE_FUSE_ALU_AND_BRANCH X86_TUNE_ACCUMULATE_OUTGOING_ARGS X86_TUNE_PROLOGUE_USING_MOVE X86_TUNE_EPILOGUE_USING_MOVE X86_TUNE_USE_LEAVE X86_TUNE_PUSH_MEMORY X86_TUNE_SINGLE_PUSH X86_TUNE_DOUBLE_PUSH X86_TUNE_SINGLE_POP X86_TUNE_DOUBLE_POP X86_TUNE_PAD_SHORT_FUNCTION X86_TUNE_PAD_RETURNS X86_TUNE_FOUR_JUMP_LIMIT X86_TUNE_SOFTWARE_PREFETCHING_BENEFICIAL X86_TUNE_LCP_STALL X86_TUNE_READ_MODIFY X86_TUNE_USE_INCDEC X86_TUNE_INTEGER_DFMODE_MOVES X86_TUNE_OPT_AGU X86_TUNE_AVOID_LEA_FOR_ADDR  X86_TUNE_SLOW_IMUL_IMM32_MEM !X86_TUNE_SLOW_IMUL_IMM8 "X86_TUNE_AVOID_MEM_OPND_FOR_CMOVE #X86_TUNE_SINGLE_STRINGOP $X86_TUNE_PREFER_KNOWN_REP_MOVSB_STOSB %X86_TUNE_MISALIGNED_MOVE_STRING_PRO_EPILOGUES &X86_TUNE_USE_SAHF 'X86_TUNE_USE_CLTD (X86_TUNE_USE_BT )X86_TUNE_AVOID_FALSE_DEP_FOR_BMI *X86_TUNE_ADJUST_UNROLL +X86_TUNE_ONE_IF_CONV_INSN ,X86_TUNE_AVOID_MFENCE -X86_TUNE_EXPAND_ABS .X86_TUNE_USE_HIMODE_FIOP /X86_TUNE_USE_SIMODE_FIOP 0X86_TUNE_USE_FFREEP 1X86_TUNE_EXT_80387_CONSTANTS 2X86_TUNE_GENERAL_REGS_SSE_SPILL 3X86_TUNE_SSE_UNALIGNED_LOAD_OPTIMAL 4X86_TUNE_SSE_UNALIGNED_STORE_OPTIMAL 5X86_TUNE_SSE_PACKED_SINGLE_INSN_OPTIMAL 6X86_TUNE_SSE_TYPELESS_STORES 7X86_TUNE_SSE_LOAD0_BY_PXOR 8X86_TUNE_INTER_UNIT_MOVES_TO_VEC 9X86_TUNE_INTER_UNIT_MOVES_FROM_VEC :X86_TUNE_INTER_UNIT_CONVERSIONS ;X86_TUNE_SPLIT_MEM_OPND_FOR_FP_CONVERTS <X86_TUNE_USE_VECTOR_FP_CONVERTS =X86_TUNE_USE_VECTOR_CONVERTS >X86_TUNE_SLOW_PSHUFB ?X86_TUNE_AVOID_4BYTE_PREFIXES @X86_TUNE_USE_GATHER_2PARTS AX86_TUNE_USE_SCATTER_2PARTS BX86_TUNE_USE_GATHER_4PARTS CX86_TUNE_USE_SCATTER_4PARTS DX86_TUNE_USE_GATHER_8PARTS EX86_TUNE_USE_SCATTER_8PARTS FX86_TUNE_AVOID_128FMA_CHAINS GX86_TUNE_AVOID_256FMA_CHAINS HX86_TUNE_AVOID_512FMA_CHAINS IX86_TUNE_V2DF_REDUCTION_PREFER_HADDPD JX86_TUNE_AVX256_UNALIGNED_LOAD_OPTIMAL KX86_TUNE_AVX256_UNALIGNED_STORE_OPTIMAL LX86_TUNE_AVX256_SPLIT_REGS MX86_TUNE_AVX128_OPTIMAL NX86_TUNE_AVX256_OPTIMAL OX86_TUNE_AVX512_SPLIT_REGS PX86_TUNE_AVX256_MOVE_BY_PIECES QX86_TUNE_AVX256_STORE_BY_PIECES RX86_TUNE_AVX512_MOVE_BY_PIECES SX86_TUNE_AVX512_STORE_BY_PIECES TX86_TUNE_DOUBLE_WITH_ADD UX86_TUNE_ALWAYS_FANCY_MATH_387 VX86_TUNE_UNROLL_STRLEN WX86_TUNE_SHIFT1 XX86_TUNE_ZERO_EXTEND_WITH_AND YX86_TUNE_PROMOTE_HIMODE_IMUL ZX86_TUNE_FAST_PREFIX [X86_TUNE_READ_MODIFY_WRITE \X86_TUNE_MOVE_M1_VIA_OR ]X86_TUNE_NOT_UNPAIRABLE ^X86_TUNE_PARTIAL_REG_STALL _X86_TUNE_PARTIAL_MEMORY_READ_STALL `X86_TUNE_PROMOTE_QIMODE aX86_TUNE_PROMOTE_HI_REGS bX86_TUNE_HIMODE_MATH cX86_TUNE_SPLIT_LONG_MOVES dX86_TUNE_USE_XCHGB eX86_TUNE_USE_MOV0 fX86_TUNE_NOT_VECTORMODE gX86_TUNE_AVOID_VECTOR_DECODE hX86_TUNE_BRANCH_PREDICTION_HINTS_TAKEN iX86_TUNE_BRANCH_PREDICTION_HINTS_NOT_TAKEN jX86_TUNE_QIMODE_MATH kX86_TUNE_PROMOTE_QI_REGS lX86_TUNE_EMIT_VZEROUPPER mX86_TUNE_SLOW_STC nX86_TUNE_USE_RCR oX86_TUNE_LAST p ix86_arch_indices ç   Ğ  X86_ARCH_CMOV  X86_ARCH_CMPXCHG X86_ARCH_CMPXCHG8B X86_ARCH_XADD X86_ARCH_BSWAP X86_ARCH_LAST  signed char __int128 __int128 unsigned _Float16 complex _Float16 complex float complex double  complex long double _Float128  complex _Float128 
+    func_ptr *?  ½  Ù   __CTOR_LIST__ /Î  __DTOR_LIST__ 0Î  ½    “    Ù  {  	 &@   í  |  	&@                                                                                                                                                                                                                                                                                                                                                                                                                                 %   (   $ >  >!!I:!;9!  I  4 :!;9!I?<  4 G:!;9!
+    I  %   I  	 '  
+     :;9I  !   ! I/                                                                                                                                                                                                                                                                                                                                                    X     .   û          a          	 ] @   ô ""gY0uKgg0=L"" D     <   û      '  ˆ  «  ×  á  è  ô                                                                                                                                                                                                                                                                                                                                                                 ÿÿÿÿ x        ,        ] @   2       A‚A€nÀAÂ                                                                                                                                                                                                                                                                                                                                                                                                                                                              C:/buildroot/src/gcc-14.2.0/libgcc/config/i386\cygwin.S C:\buildroot\x86_64-1420-posix-seh-msvcrt-rt_v12-rev2\build\gcc-14.2.0\x86_64-w64-mingw32\libgcc GNU AS 2.42                                                                                                                                                                                                                                                                                                                                                            C:\buildroot\x86_64-1420-posix-seh-msvcrt-rt_v12-rev2\build\gcc-14.2.0\x86_64-w64-mingw32\libgcc C:/buildroot/src/gcc-14.2.0/libgcc/config/i386 cygwin.S C:\buildroot\x86_64-1420-posix-seh-msvcrt-rt_v12-rev2\build\gcc-14.2.0\x86_64-w64-mingw32\libgcc C:/buildroot/src/gcc-14.2.0/libgcc/libgcc2.c C:/buildroot/x86_64-1420-posix-seh-msvcrt-rt_v12-rev2/build/gcc-14.2.0/x86_64-w64-mingw32/libgcc C:/buildroot/src/gcc-14.2.0/libgcc C:/buildroot/src/gcc-14.2.0/gcc/config/i386 libgcc2.c i386.h gbl-ctors.h libgcc2.c   .file   M   şÿ  gcrtexe.c              a                                              Œ   p                        µ   €                        İ                             Ğ                           `                        @             K  @                        a                           y  °                        ¥  `                        ½  0          Ê  p                    envp           argv            argc    (           â             ì  0                          €            °                        >  À                        d             n                           •  P                        »                           ã                      mainret              ğ                          à                        .                          D                           Z  Ğ          l  Ô      .l_endw ç          v  ğ      .l_startô      .l_end        atexit        .text          $  A             .data                            .bss           ,                 .xdata         l   
+                 .pdata         T                    …                             ¨                     .file   \   şÿ  gcygming-crtbeg        ™  0                           ®  @      .text   0                     .data                            .bss    0                        .xdata  l                       .pdata  T                      .file   q   şÿ  gmain.c            printf  P                           Å  ¤          Ï  –      main    3      .text   P     Å               .data                            .bss    0                        .xdata  t      0                 .pdata  l      0                .rdata         p                     Ü  €     C                 .file   ‹   şÿ  glexer.c           printf                              ç  @           ù  @          
+      t            ó      tokenizew          #  ì          /  L          D  Ç      .text         é  D             .data          €                .bss    @                      .xdata  ¤      X                 .pdata  œ      T                .rdata  p      €  {                 Ü  Ğ     C                 .file   ¹   şÿ  gparser.c          fprintf                        printf  S      tokens  `      current h      total   l      peek    §      previousğ          P  =      advance n      check   ¨      match   õ      allocate,          Z  ›          h  ö          u  +          ‚  c            ›            á          ­            ¾            Ò  -          æ             ù  !            ë!          %  Ä"      parse   ¸#          5  C$          B  z$          M  â%      .text        k  T             .data   €                        .bss    `                      .xdata  ü      0                .pdata  ğ      8  N             .rdata  ğ     ´                   Ü        C                 .file   Ó   şÿ  ginterpreter.c     fprintf €(                       printf  Ã(      vars    €          X  €          b  )          r  ±)          ‚  v*          Œ  Q-          –  ¬/      .text   €(     w  ?             .data   €                        .bss    €                     .xdata  ,     T                 .pdata  (     T                .rdata  °     (                   Ü  p     C                 .file   ì   şÿ  gcompiler.c        fprintf  0                       bytecode       emit    C0             é0          ­  “1          º  S4      compile à6          Ç  µ7      .text    0     ó  P             .data   €                        .bss                           .xdata  €     T                 .pdata  |     T                .rdata  à     x                    Ü  À     C                 .file     şÿ  gvm.c              fprintf  8                       printf  C8      stack   À      sp      À          Õ  à      push    —8      pop     9      run     q9      .text    8     K               .data   €                        .bss    À                      .xdata  Ô     @                 .pdata  Ğ     <                .rdata  `     €                    Ü       C                 .file     şÿ  ggccmain.c             ß  P<                       p.0     €           ñ  <            À                    __main  =             à      .text   P<     ß                .data   €                      .bss    à                      .xdata                        .pdata       $   	             .file   !  şÿ  gnatstart.c        .text   0=                       .data                          .bss    ğ                      .file   )  şÿ  gwildcard.c        .text   0=                       .data                            .bss                           .file   7  şÿ  gdllargv.c         _setargv0=                       .text   0=                      .data                            .bss                           .xdata  ,                      .pdata  0                     .file   ?  şÿ  g_newmode.c        .text   @=                       .data                            .bss                          .file   e  şÿ  gtlssup.c              ,  @=                           ;  p=          J                       __xd_a  Ø      __xd_z  à          a   >      .text   @=     Ã                .data                            .bss                           .xdata  0                      .pdata  <     $   	             .CRT$XLDÈ                     .CRT$XLCÀ                     .rdata  à     H                .CRT$XDZà                      .CRT$XDAØ                      .CRT$XLZĞ                      .CRT$XLA¸                      .tls$ZZZ                       .tls                            .file   m  şÿ  gxncommod.c        .text   >                       .data                            .bss    0                      .file   }  şÿ  gcinitexe.c        .text   >                       .data                            .bss    @                       .CRT$XCZ˜                      .CRT$XCAˆ                      .CRT$XIZ°                      .CRT$XIA                       .file     şÿ  gmerr.c            _matherr>                       .text   >     ø                .data                            .bss    @                       .rdata  @	     @               .xdata  H                      .pdata  `                     .file   œ  şÿ  gCRT_fp10.c        _fpreset?                       fpreset ?      .text   ?                      .data                            .bss    @                       .xdata  `                      .pdata  l                     .file   ¤  şÿ  gmingw_helpers.    .text    ?                       .data                            .bss    @                      .file   ½  şÿ  gpseudo-reloc.c        m   ?                           |  ?          ’  T      the_secsX             A          ¸  P          Ã  à                        ô  ğ                    .text    ?     G  &             .data                            .bss    P                      .rdata  €
+         [                .xdata  d     0                 .pdata  x     $   	             .file   Í  şÿ  gusermatherr.c         !  pD                           7  `          E  °D      .text   pD     L                .data                            .bss    `                      .xdata  ”                      .pdata  œ                     .file   Õ  şÿ  gxtxtmode.c        .text   ÀD                       .data                            .bss    p                      .file   å  şÿ  gcrt_handler.c         \  ÀD                       .text   ÀD     ½               .data                            .bss    €                      .xdata                         .rdata  à     (   
+                 .pdata  ´                     .file   ù  şÿ  gtlsthrd.c             s  €F                           “  À          ¡             ¯  ğF          Ì  ¨          ß  `G          ÿ  ğG      .text   €F     b  "             .data                            .bss          H                 .xdata  ¨     0                 .pdata  À     0                .file     şÿ  gtlsmcrt.c         .text    I                       .data                           .bss                            .file     şÿ  gexit_wrappers.    exit     I                             P                    _exit   I          -  0                    .text    I                     .data   °                        .bss                            .xdata  Ø                      .pdata  ğ                     .file     şÿ  g    H            .text    I                       .data   °                        .bss                           .file   2  şÿ  gpesect.c              \   I                           o  PI          ~   I          “  @J          °  ÀJ          È   K          Û  €K          ë  ÀK          	  PL      .text    I     ö  	             .data   °                        .bss                           .xdata  è     ,                 .pdata       l                .file   H  şÿ  gfake                  *	         (                    6	                              D	         \                .text    M     2                 .data   °                        .bss                               P	         ™                     `	      
+       0                    o	         ¥                     z	         H                .file   Z  şÿ  glibgcc2.c         .text   `M                       .data   °                        .bss                               *	  (      <                   6	        ›                     `	  0   
+                            D	  \      H                    P	  ™      e                .file   b  şÿ  gmingw_matherr.    .text   `M                       .data   °                       .bss    0                       .file   p  şÿ  gmingw_vfprintf        ‡	  `M                       .text   `M     A                .data   À                        .bss    0                       .xdata                        .pdata  t                     .file     şÿ  gmingw_pformat.        ˜	  ÀM                       fpi.0   À           ¦	  °N          µ	  O          É	   P          Ü	  ğQ          ë	  @R          
+      ĞR          
+       Y          0
+      °\          K
+       ^          `
+      0b          v
+       c          ‡
+       c          —
+      €d          ¨
+      àe          Å
+      Ğj      .text   ÀM     }(  2             .data   À                       .bss    0                       .xdata        ü                 .pdata  €     À   0             .rdata       Œ  [             .file   ¡  şÿ  gdmisc.c               Õ
+      @v                           ä
+      €v          ô
+      w          ÿ
+      @w      .text   @v     ­               .data   à                        .bss    0                       .xdata       0                 .pdata  @     0                .file   ³  şÿ  ggdtoa.c           __gdtoa  y                             Ğ                    .text    y       Y             .data   à                        .bss    0                       .rdata        ˆ                 .xdata  L                      .pdata  p                     .file   Â  şÿ  ggmisc.c               &  @’                           3  `“      .text   @’     a                .data   à                        .bss    0                       .xdata  d                      .pdata  |                     .file   æ  şÿ  gmisc.c                @  À“                           J  °          W  À          d   ”          v  ğ”      freelist`          ƒ  `            à           ™  ğ•          ¥  `–          ³   —          ½  à—          È  0™      p5s     @      p05.0   @          ×  Ğš          ä   œ          î  `œ          ù  @            PŸ            @¡      .text   À“     ²  8             .data   à                      .bss    @     Ğ	                .xdata  x     °                 .pdata  ”     ¨   *             .rdata  @     X                .file   ô  şÿ  gstrnlen.c         strnlen €¡                       .text   €¡     8                 .data   ğ                        .bss                             .xdata  (                      .pdata  <                     .file     şÿ  gwcsnlen.c         wcsnlen À¡                       .text   À¡     5                 .data   ğ                        .bss                             .xdata  ,                      .pdata  H                     .file     şÿ  g__p__fmode.c             ¢                           $  @                    .text    ¢                     .data   ğ                      .bss                             .xdata  0                      .pdata  T                     .file   "  şÿ  g__p__commode.c        @  ¢                           M                       .text   ¢                     .data                         .bss                             .xdata  4                      .pdata  `                     .file   1  şÿ  gmingw_lock.c          k   ¢                           v  ¢      .text    ¢     Ğ   
+                 .data                        .bss                             .xdata  8                      .pdata  l                     .file   C  şÿ  g    	                ƒ  ğ¢                       handler             §  ğ¢          Æ   £          ê   £      .text   ğ¢                     .data                         .bss                            .xdata  H                      .pdata  „                     .file   Q  şÿ  gacrt_iob_func.        %  £                       .text   £                     .data   0                     .bss    0                        .xdata  P                      .pdata  œ                     .file   a  şÿ  gwcrtomb.c             5  0£                       wcrtomb À£          B   ¤      .text   0£     Æ               .data   @                       .bss    0                        .xdata  X     (                 .pdata  ¨     $   	             .file   Ó  şÿ  gmbrtowc.c             L   ¥                       mbrtowc P¦          Y  8           l  À¦          v  4       mbrlen  Ğ§          ‰  0       .text    ¥     (               .data   @                       .bss    0                       .xdata  €     @                 .pdata  Ì     0                .text   0¨      .data   @      .bss    @       .idata$7Ğ      .idata$5¸      .idata$4°       .idata$6Z      .text   8¨      .data   @      .bss    @       .idata$7Ô      .idata$5À      .idata$4¸       .idata$6r      .text   @¨      .data   @      .bss    @       .idata$7Ø      .idata$5È      .idata$4À       .idata$6ˆ      .text   H¨      .data   @      .bss    @       .idata$7Ü      .idata$5Ğ      .idata$4È       .idata$6      .text   P¨      .data   @      .bss    @       .idata$7à      .idata$5Ø      .idata$4Ğ       .idata$6®      .text   P¨      .data   @      .bss    @       .idata$7ä      .idata$5à      .idata$4Ø       .idata$6º      .text   X¨      .data   @      .bss    @       .idata$7è      .idata$5è      .idata$4à       .idata$6È      .text   `¨      .data   @      .bss    @       .idata$7ì      .idata$5ğ      .idata$4è       .idata$6Ú      .text   h¨      .data   @      .bss    @       .idata$7ğ      .idata$5ø      .idata$4ğ       .idata$6î      .text   p¨      .data   @      .bss    @       .idata$7ô      .idata$5       .idata$4ø       .idata$6ü      .text   x¨      .data   @      .bss    @       .idata$7ø      .idata$5      .idata$4       .idata$6      .text   x¨      .data   @      .bss    @       .idata$7ü      .idata$5      .idata$4      .idata$6      .text   €¨      .data   @      .bss    @       .idata$7       .idata$5      .idata$4      .idata$6      .text   €¨      .data   @      .bss    @       .idata$7      .idata$5       .idata$4      .idata$6$      .text   €¨      .data   @      .bss    @       .idata$7      .idata$5(      .idata$4       .idata$6.      .text   ˆ¨      .data   @      .bss    @       .idata$7      .idata$50      .idata$4(      .idata$6:      .text   ¨      .data   @      .bss    @       .idata$7      .idata$58      .idata$40      .idata$6B      .text   ˜¨      .data   @      .bss    @       .idata$7      .idata$5@      .idata$48      .idata$6L      .text    ¨      .data   @      .bss    @       .idata$7      .idata$5H      .idata$4@      .idata$6V      .text   ¨¨      .data   @      .bss    @       .idata$7      .idata$5P      .idata$4H      .idata$6`      .text   °¨      .data   @      .bss    @       .idata$7       .idata$5X      .idata$4P      .idata$6h      .text   ¸¨      .data   @      .bss    @       .idata$7$      .idata$5`      .idata$4X      .idata$6p      .text   À¨      .data   @      .bss    @       .idata$7(      .idata$5h      .idata$4`      .idata$6z      .text   À¨      .data   @      .bss    @       .idata$7,      .idata$5p      .idata$4h      .idata$6‚      .text   È¨      .data   @      .bss    @       .idata$70      .idata$5x      .idata$4p      .idata$6Œ      .text   Ğ¨      .data   @      .bss    @       .idata$74      .idata$5€      .idata$4x      .idata$6”      .text   Ø¨      .data   @      .bss    @       .idata$78      .idata$5ˆ      .idata$4€      .idata$6      .text   à¨      .data   @      .bss    @       .idata$7<      .idata$5      .idata$4ˆ      .idata$6¦      .text   è¨      .data   @      .bss    @       .idata$7@      .idata$5˜      .idata$4      .idata$6®      .text   ğ¨      .data   @      .bss    @       .idata$7D      .idata$5       .idata$4˜      .idata$6¶      .text   ø¨      .data   @      .bss    @       .idata$7H      .idata$5¨      .idata$4       .idata$6¾      .text    ©      .data   @      .bss    @       .idata$7L      .idata$5°      .idata$4¨      .idata$6Æ      .text   ©      .data   @      .bss    @       .idata$7P      .idata$5¸      .idata$4°      .idata$6Ğ      .text   ©      .data   @      .bss    @       .idata$7T      .idata$5À      .idata$4¸      .idata$6Ú      .text   ©      .data   @      .bss    @       .idata$7X      .idata$5È      .idata$4À      .idata$6ä      .text    ©      .data   @      .bss    @       .idata$7\      .idata$5Ğ      .idata$4È      .idata$6î      .text   (©      .data   @      .bss    @       .idata$7`      .idata$5Ø      .idata$4Ğ      .idata$6ü      .text   0©      .data   @      .bss    @       .idata$7d      .idata$5à      .idata$4Ø      .idata$6      .text   8©      .data   @      .bss    @       .idata$7h      .idata$5è      .idata$4à      .idata$6      .text   @©      .data   @      .bss    @       .idata$7l      .idata$5ğ      .idata$4è      .idata$6      .text   H©      .data   @      .bss    @       .idata$7p      .idata$5ø      .idata$4ğ      .idata$6$      .text   P©      .data   @      .bss    @       .idata$7t      .idata$5       .idata$4ø      .idata$6.      .text   X©      .data   @      .bss    @       .idata$7x      .idata$5      .idata$4       .idata$68      .text   `©      .data   @      .bss    @       .idata$7|      .idata$5      .idata$4      .idata$6B      .text   h©      .data   @      .bss    @       .idata$7€      .idata$5      .idata$4      .idata$6L      .text   p©      .data   @      .bss    @       .idata$7„      .idata$5       .idata$4      .idata$6X      .text   x©      .data   @      .bss    @       .idata$7ˆ      .idata$5(      .idata$4       .idata$6b      .text   €©      .data   @      .bss    @       .idata$7Œ      .idata$50      .idata$4(      .idata$6l      .text   ˆ©      .data   @      .bss    @       .idata$7      .idata$58      .idata$40      .idata$6v      .text   ©      .data   @      .bss    @       .idata$7”      .idata$5@      .idata$48      .idata$6‚      .file   á  şÿ  gfake              hname   °       fthunk  ¸      .text    ©                       .data   @                       .bss    @                        .idata$2                      .idata$4°       .idata$5¸      .file   J  şÿ  gfake              .text    ©                       .data   @                       .bss    @                        .idata$4@                      .idata$5H                      .idata$7˜                      .text    ©      .data   @      .bss    @       .idata$7¼      .idata$5¨      .idata$4        .idata$6D      .text   ¨©      .data   @      .bss    @       .idata$7¸      .idata$5       .idata$4˜       .idata$64      .text   °©      .data   @      .bss    @       .idata$7´      .idata$5˜      .idata$4       .idata$6"      .text   ¸©      .data   @      .bss    @       .idata$7°      .idata$5      .idata$4ˆ       .idata$6      .text   À©      .data   @      .bss    @       .idata$7¬      .idata$5ˆ      .idata$4€       .idata$6      .text   È©      .data   @      .bss    @       .idata$7¨      .idata$5€      .idata$4x       .idata$6î      .text   Ğ©      .data   @      .bss    @       .idata$7¤      .idata$5x      .idata$4p       .idata$6Ø      .text   Ø©      .data   @      .bss    @       .idata$7       .idata$5p      .idata$4h       .idata$6À      .text   à©      .data   @      .bss    @       .idata$7œ      .idata$5h      .idata$4`       .idata$6¬      .text   è©      .data   @      .bss    @       .idata$7˜      .idata$5`      .idata$4X       .idata$6      .text   ğ©      .data   @      .bss    @       .idata$7”      .idata$5X      .idata$4P       .idata$6€      .text   ø©      .data   @      .bss    @       .idata$7      .idata$5P      .idata$4H       .idata$6h      .text    ª      .data   @      .bss    @       .idata$7Œ      .idata$5H      .idata$4@       .idata$6P      .file   X  şÿ  gfake              hname   @       fthunk  H      .text   ª                       .data   @                       .bss    @                        .idata$2                       .idata$4@       .idata$5H      .file   f  şÿ  gfake              .text   ª                       .data   @                       .bss    @                        .idata$4¨                       .idata$5°                      .idata$7À                      .file   x  şÿ  gcygming-crtend        •  ª                       .text   ª                       .data   @                       .bss    @                            ©  ª                         ·  À                          Æ  ü                         Õ  h                     __xc_z  ˜          â  `            P            À          )              8  x          G             T  È          m  0          y  à©          Š  È©          ¦             Â  p      strerrorh©          ä  `      _lock   ˆ¨          ñ  ğ                           À      __xl_a  ¸          0  ğ©          =  `      _cexit  p¨      wcslen  ©          Q  `  ÿÿ       i     ÿÿ       ‚              ˜  P¨          £      ÿÿ       ½     ÿÿ       Ù  ¸          ë  H      __xl_d  È            (      _tls_end           ,  À          B  ˆ          N  ¨©          [             m  @          ‚  ø          “  ¸          £            °            È  ¨          Ô          memcpy  0©      perror  @©          ß  0          í  `          ş  ğ          $  €      malloc  (©          =        _CRT_MT             P  0          d  ¸©          p            }              ‹  x          ¥  ¸          À  `          ã     ÿÿ       û  X            0          "  (          <  ˜          G  @¨          Z  `          s         isspace ©          Œ  `          —  °©          ¦  è          ¶  Ø          È  p          ã  0¨          ø         abort   ¨¨            à          C  ¸          Q  Ø      __dll__     ÿÿ       a      ÿÿ       v  ø©          ‹  °           ¨  @          µ             Ä             Ô  X          ß            ë     ÿÿ         ”       calloc  ¸¨             	          #  Ø          5  è          B  P          N            _  à          l  À          z  `      fprintf Ğ¨          ˜  ˜          ¶             Ã        Sleep   À©          Ò  p      _commode0          ã  @      fseek   ğ¨          ğ  °          ı  `            Ğ                        9  @       __xi_z  °          E             T             l             |              °          »  P          Ö  ,      signal  X©          á  ø          ø  ˆ      strncmp x©          
+      `      strncpy €©                   keywords            9        realloc H©          F  €          g  ¨            Ğ          •         isalpha ©          ¢  `          °  Ø          ½  P      fread   à¨          Ü     ÿÿ       ï  `      strdup  ˜¨            H¨            ø          +  è©          E  8¨          Y  h      fopen   È¨      memset  8©          d  8          s     ÿÿ       ˆ  ¨      ftell   ø¨          —  h          ®  Ø      fclose  À¨          ¾  H          Ì         __xl_z  Ğ      isalnum ©      __end__              Ù  €          û  ğ            8      strcmp  `©            x      __xi_a             $   ©          8  X¨          G  ˆ          S  Ø©      __xc_a  ˆ          h  ğ               ÿÿ       ˜  Ø          ª     ÿÿ   _fmode  p          ¸  h¨          Ã            Õ  `¨          æ             ÷  €                                   )  Ğ©          =  ˜      fputc   Ø¨      __xl_c  À          R             _             r  (          ‚  p            $          ¨             ´  à          Å  Ğ          Ö   ©          á  à      _newmode          ù  €¨      fwrite   ©            (            @             0          6      ÿÿ       N      ÿÿ       _  Ğ          r         rewind  P©          ‰   M          –  ğ          ¬  @          ¹  À      _onexit ¨          Ó  `          å             
+         ÿÿ       &      ÿÿ       >  H          L  P          _  è      _errno  x¨      atoi    °¨          t            €  à      strlen  p©                        °          Ã  È          Ñ            à   ª          ö  `            x      _unlock  ¨          $  ğ          3  Ø          C         vfprintfˆ©      free    è¨          O  @      `  .debug_aranges .debug_info .debug_abbrev .debug_line .debug_frame .debug_str .debug_line_str __mingw_invalidParameterHandler pre_c_init .rdata$.refptr.__mingw_initltsdrot_force .rdata$.refptr.__mingw_initltsdyn_force .rdata$.refptr.__mingw_initltssuo_force .rdata$.refptr.__ImageBase .rdata$.refptr.__mingw_app_type managedapp .rdata$.refptr._fmode .rdata$.refptr._commode .rdata$.refptr._MINGW_INSTALL_DEBUG_MATHERR .rdata$.refptr._matherr pre_cpp_init .rdata$.refptr._newmode startinfo .rdata$.refptr._dowildcard __tmainCRTStartup .rdata$.refptr.__native_startup_lock .rdata$.refptr.__native_startup_state has_cctor .rdata$.refptr.__dyn_tls_init_callback .rdata$.refptr._gnu_exception_handler .rdata$.refptr.__mingw_oldexcpt_handler .rdata$.refptr.__imp___initenv .rdata$.refptr.__xc_z .rdata$.refptr.__xc_a .rdata$.refptr.__xi_z .rdata$.refptr.__xi_a WinMainCRTStartup .l_startw mainCRTStartup .CRT$XCAA .CRT$XIAA __gcc_register_frame __gcc_deregister_frame read_file clean_source .rdata$zzz unexpected_tokens unexpected_count check_keyword make_token free_tokens token_type_to_string print_token is_at_end parse_primary parse_binary parse_factor parse_term parse_comparison parse_equality parse_expression parse_let_statement parse_yap_statement parse_if_statement parse_while_statement parse_block_statement parse_statement print_indent print_expr print_stmt var_count lookup_variable assign_variable eval_expr exec_stmt interpret add_constant compile_expr compile_stmt free_bytecode variables __do_global_dtors __do_global_ctors .rdata$.refptr.__CTOR_LIST__ initialized __dyn_tls_dtor __dyn_tls_init .rdata$.refptr._CRT_MT __tlregdtor __report_error mark_section_writable maxSections _pei386_runtime_relocator was_init.0 .rdata$.refptr.__RUNTIME_PSEUDO_RELOC_LIST_END__ .rdata$.refptr.__RUNTIME_PSEUDO_RELOC_LIST__ __mingw_raise_matherr stUserMathErr __mingw_setusermatherr _gnu_exception_handler __mingwthr_run_key_dtors.part.0 __mingwthr_cs key_dtor_list ___w64_mingwthr_add_key_dtor __mingwthr_cs_init ___w64_mingwthr_remove_key_dtor __mingw_TLScallback .rdata$.refptr.__imp_exit .rdata$.refptr.__imp__exit pseudo-reloc-list.c _ValidateImageBase _FindPESection _FindPESectionByName __mingw_GetSectionForAddress __mingw_GetSectionCount _FindPESectionExec _GetPEImageBase _IsNonwritableInCurrentImage __mingw_enum_import_library_names .debug_info .debug_abbrev .debug_line .debug_line_str .debug_aranges .debug_str .debug_frame __mingw_vfprintf __pformat_cvt __pformat_putc __pformat_wputchars __pformat_putchars __pformat_puts __pformat_emit_inf_or_nan __pformat_xint.isra.0 __pformat_int.isra.0 __pformat_emit_radix_point __pformat_emit_float __pformat_emit_efloat __pformat_efloat __pformat_float __pformat_gfloat __pformat_emit_xfloat.isra.0 __mingw_pformat __rv_alloc_D2A __nrv_alloc_D2A __freedtoa __quorem_D2A .rdata$.refptr.__tens_D2A __rshift_D2A __trailz_D2A dtoa_lock dtoa_CS_init dtoa_CritSec dtoa_lock_cleanup __Balloc_D2A private_mem pmem_next __Bfree_D2A __multadd_D2A __i2b_D2A __mult_D2A __pow5mult_D2A __lshift_D2A __cmp_D2A __diff_D2A __b2d_D2A __d2b_D2A __strcp_D2A __p__fmode .rdata$.refptr.__imp__fmode __p__commode .rdata$.refptr.__imp__commode _lock_file _unlock_file mingw_get_invalid_parameter_handler _get_invalid_parameter_handler mingw_set_invalid_parameter_handler _set_invalid_parameter_handler invalid_parameter_handler.c __acrt_iob_func __wcrtomb_cp wcsrtombs __mbrtowc_cp internal_mbstate.2 mbsrtowcs internal_mbstate.1 s_mbstate.0 register_frame_ctor .text.startup .xdata.startup .pdata.startup .ctors.65535 ___RUNTIME_PSEUDO_RELOC_LIST__ __imp_abort __lib64_libkernel32_a_iname __data_start__ ___DTOR_LIST__ __imp__fmode __imp____mb_cur_max_func __imp__lock IsDBCSLeadByteEx SetUnhandledExceptionFilter _head_lib64_libmsvcrt_def_a .refptr.__mingw_initltsdrot_force __imp_calloc __imp___p__fmode ___tls_start__ .refptr.__native_startup_state GetLastError __rt_psrelocs_start __dll_characteristics__ __size_of_stack_commit__ __mingw_module_is_dll __iob_func __size_of_stack_reserve__ __major_subsystem_version__ ___crt_xl_start__ __imp_DeleteCriticalSection __imp__set_invalid_parameter_handler .refptr.__CTOR_LIST__ __imp_fputc VirtualQuery ___crt_xi_start__ .refptr.__imp__fmode __imp__amsg_exit ___crt_xi_end__ __imp__errno .refptr.__imp___initenv __imp_ftell _tls_start __imp_strncpy .refptr._matherr .refptr.__RUNTIME_PSEUDO_RELOC_LIST__ __mingw_oldexcpt_handler __imp__unlock_file .refptr.__imp__exit TlsGetValue __imp_strcmp __bss_start__ __imp_MultiByteToWideChar __imp___C_specific_handler ___RUNTIME_PSEUDO_RELOC_LIST_END__ __size_of_heap_commit__ __imp_GetLastError .refptr._dowildcard __mingw_initltsdrot_force __imp_free ___mb_cur_max_func .refptr.__mingw_app_type __mingw_initltssuo_force __tens_D2A VirtualProtect ___crt_xd_end__ ___crt_xp_start__ __imp_LeaveCriticalSection __C_specific_handler .refptr.__mingw_oldexcpt_handler .refptr.__RUNTIME_PSEUDO_RELOC_LIST_END__ __imp_isalnum ___crt_xp_end__ __minor_os_version__ EnterCriticalSection _MINGW_INSTALL_DEBUG_MATHERR __imp_strdup .refptr.__xi_a .refptr._CRT_MT __imp_atoi __imp__exit __section_alignment__ __native_dllmain_reason _tls_used ___crt_xd_start__ __imp_memset __IAT_end__ __imp__lock_file __imp_memcpy __imp_isalpha __RUNTIME_PSEUDO_RELOC_LIST__ __lib64_libmsvcrt_def_a_iname __imp_rewind __imp_strerror .refptr._newmode __data_end__ __imp_fwrite __CTOR_LIST__ __imp___getmainargs _head_lib64_libkernel32_a __bss_end__ __tinytens_D2A __native_vcclrit_reason ___crt_xc_end__ .refptr.__mingw_initltssuo_force .refptr.__native_startup_lock __imp_EnterCriticalSection _tls_index __native_startup_state ___crt_xc_start__ ___CTOR_LIST__ .refptr.__dyn_tls_init_callback __imp_signal .refptr.__mingw_initltsdyn_force __imp_WideCharToMultiByte .refptr.__ImageBase __imp_strlen __bigtens_D2A __imp_malloc .refptr._gnu_exception_handler __file_alignment__ __imp_InitializeCriticalSection __getmainargs __imp_realloc InitializeCriticalSection ___lc_codepage_func __imp_exit __imp_vfprintf __major_os_version__ __mingw_pcinit __imp_IsDBCSLeadByteEx __imp___initenv __IAT_start__ __imp__cexit __imp_SetUnhandledExceptionFilter __imp_perror __imp__onexit __DTOR_LIST__ WideCharToMultiByte __set_app_type __imp_Sleep LeaveCriticalSection __imp___setusermatherr __size_of_heap_reserve__ ___crt_xt_start__ __subsystem__ _amsg_exit __imp_TlsGetValue __setusermatherr .refptr._commode __imp_fprintf __mingw_pcppinit __imp___p__commode MultiByteToWideChar __imp_VirtualProtect ___tls_end__ __imp_VirtualQuery __imp__initterm __imp_fclose __mingw_initltsdyn_force _dowildcard __imp___iob_func __imp_localeconv localeconv __dyn_tls_init_callback _initterm __imp_strncmp .refptr._fmode __imp___acrt_iob_func __major_image_version__ __loader_flags__ .refptr.__tens_D2A .refptr.__imp__commode ___chkstk_ms __native_startup_lock __imp_wcslen __imp____lc_codepage_func __rt_psrelocs_end __imp__get_invalid_parameter_handler __minor_subsystem_version__ __minor_image_version__ __imp__unlock .refptr.__imp_exit __imp___set_app_type __imp_fread .refptr.__xc_a .refptr.__xi_z .refptr._MINGW_INSTALL_DEBUG_MATHERR __imp_isspace __imp__commode DeleteCriticalSection __RUNTIME_PSEUDO_RELOC_LIST_END__ __imp_fopen .refptr.__xc_z ___crt_xt_end__ __imp_fseek __mingw_app_type 
+===== ./lexer.c =====
+    #include <stdio.h>
+    #include <stdlib.h>
+    #include <string.h>
+    #include <ctype.h>
+    #include "lexer.h"
+    
+    // Uncomment this to enable debug logging
+    // #define DEBUG
+    
+    #define MAX_TOKENS 1024
+    
+    typedef struct {
+        char ch;
+        int line;
+    } UnexpectedToken;
+    
+    // Max number of unexpected tokens we'll track
+    #define MAX_UNEXPECTED 128
+    
+    static UnexpectedToken unexpected_tokens[MAX_UNEXPECTED];
+    static int unexpected_count = 0;
+    
+    
+    typedef struct {
+      const char* keyword;
+      TokenType type;
+    } Keyword;
+    
+    Keyword keywords[] = {
+        { "let", TOKEN_LET },
+        { "fn", TOKEN_FN },
+        { "yap", TOKEN_YAP },
+        { "return", TOKEN_RETURN },
+        { "if", TOKEN_IF },
+        { "else", TOKEN_ELSE },      
+        { "while", TOKEN_WHILE },
+        { NULL, TOKEN_UNKNOWN }
+      };
+    
+    TokenType check_keyword(const char* str) {
+      for (int i = 0; keywords[i].keyword != NULL; i++) {
+        if (strcmp(str, keywords[i].keyword) == 0) {
+          return keywords[i].type;
+        }
+      }
+      return TOKEN_IDENTIFIER;
+    }
+    
+    Token make_token(TokenType type, const char* start, int length, int line) {
+      Token token;
+      token.type = type;
+      token.lexeme = (char*)malloc(length + 1);
+      strncpy(token.lexeme, start, length);
+      token.lexeme[length] = '\0';
+      token.line = line;
+      return token;
+    }
+    
+    Token* tokenize(const char* src, int* token_count) {
+      Token* tokens = malloc(sizeof(Token) * MAX_TOKENS);
+      int count = 0;
+      int line = 1;
+    
+      const char* start = src;
+      const char* current = src;
+    
+    #ifdef DEBUG
+      printf("Lexing source code...\n");
+    #endif
+    
+    while (*current != '\0' && *current != EOF) {
+    #ifdef DEBUG
+        printf("  Char: '%c' (ASCII %d) at line %d\n", *current, *current, line);
+    #endif
+    
+        start = current;
+    
+        if (isspace(*current)) {
+          if (*current == '\n') line++;
+          current++;
+          continue;
+        }
+    
+        if (isalpha(*current) || *current == '_') {
+          while (isalnum(*current) || *current == '_') current++;
+    
+          int length = current - start;
+          char* temp = malloc(length + 1);
+          strncpy(temp, start, length);
+          temp[length] = '\0';
+    
+          TokenType type = check_keyword(temp);
+          free(temp);
+          
+          tokens[count++] = make_token(type, start, current - start, line);
+          continue;
+        }
+    
+        if (isdigit(*current)) {
+          while (isdigit(*current)) current++;
+          tokens[count++] = make_token(TOKEN_INT, start, current - start, line);
+          continue;
+        }
+        // Handle line comments (//...)
+        if (*current == '/' && *(current + 1) == '/') {
+            while (*current != '\0' && *current != '\n') current++;
+            continue;
+        }
+        switch (*current) {
+          case '+': tokens[count++] = make_token(TOKEN_PLUS, current++, 1, line); break;
+          case '-': tokens[count++] = make_token(TOKEN_MINUS, current++, 1, line); break;
+          case '*': tokens[count++] = make_token(TOKEN_STAR, current++, 1, line); break;
+          case '/': tokens[count++] = make_token(TOKEN_SLASH, current++, 1, line); break;
+    
+          case '=':
+            if (*(current + 1) == '=') {
+              tokens[count++] = make_token(TOKEN_EQUAL, current, 2, line);
+              current += 2;
+            } else {
+              tokens[count++] = make_token(TOKEN_ASSIGN, current++, 1, line);
+            }
+            break;
+    
+          case '!':
+            if (*(current + 1) == '=') {
+              tokens[count++] = make_token(TOKEN_BANG_EQUAL, current, 2, line);
+              current += 2;
+            } else {
+              tokens[count++] = make_token(TOKEN_BANG, current++, 1, line);
+            }
+            break;
+    
+          case '<':
+            if (*(current + 1) == '=') {
+              tokens[count++] = make_token(TOKEN_LESS_EQUAL, current, 2, line);
+              current += 2;
+            } else {
+              tokens[count++] = make_token(TOKEN_LESS, current++, 1, line);
+            }
+            break;
+    
+          case '>':
+            if (*(current + 1) == '=') {
+              tokens[count++] = make_token(TOKEN_GREATER_EQUAL, current, 2, line);
+              current += 2;
+            } else {
+              tokens[count++] = make_token(TOKEN_GREATER, current++, 1, line);
+            }
+            break;
+    
+          case ';': tokens[count++] = make_token(TOKEN_SEMICOLON, current++, 1, line); break;
+          case ',': tokens[count++] = make_token(TOKEN_COMMA, current++, 1, line); break;
+          case '(': tokens[count++] = make_token(TOKEN_LPAREN, current++, 1, line); break;
+          case ')': tokens[count++] = make_token(TOKEN_RPAREN, current++, 1, line); break;
+          case '{': tokens[count++] = make_token(TOKEN_LBRACE, current++, 1, line); break;
+          case '}': tokens[count++] = make_token(TOKEN_RBRACE, current++, 1, line); break;
+    
+          default:
+          if (unexpected_count < MAX_UNEXPECTED) {
+            unexpected_tokens[unexpected_count].ch = *current;
+            unexpected_tokens[unexpected_count].line = line;
+            unexpected_count++;
+          }
+          tokens[count++] = make_token(TOKEN_UNKNOWN, current++, 1, line);
+          break;
+        
+        }
+      }
+    
+      tokens[count++] = make_token(TOKEN_EOF, current, 0, line);
+      *token_count = count;
+    
+      if (unexpected_count > 0) {
+        printf("\n!!! Lexing error: unexpected characters found in source code!\n");
+        for (int i = 0; i < unexpected_count; i++) {
+            printf("  -> Unexpected character '%c' at line %d\n",
+                   unexpected_tokens[i].ch, unexpected_tokens[i].line);
+        }
+        printf("\nHint: Check your source file.\n\n");
+        exit(1); // Force exit because source is invalid
+    }
+    
+    
+      return tokens;
+    }
+    
+    void free_tokens(Token* tokens, int count) {
+      for (int i = 0; i < count; i++) {
+        free(tokens[i].lexeme);
+      }
+      free(tokens);
+    }
+    
+    const char* token_type_to_string(TokenType type) {
+      switch (type) {
+        case TOKEN_LET: return "LET";
+        case TOKEN_FN: return "FN";
+        case TOKEN_YAP: return "YAP";
+        case TOKEN_RETURN: return "RETURN";
+        case TOKEN_IF: return "IF";
+        case TOKEN_WHILE: return "WHILE";
+        case TOKEN_ELSE: return "ELSE";
+        case TOKEN_IDENTIFIER: return "IDENTIFIER";
+        case TOKEN_INT: return "INT";
+        case TOKEN_FLOAT: return "FLOAT";
+        case TOKEN_ASSIGN: return "ASSIGN";
+        case TOKEN_PLUS: return "PLUS";
+        case TOKEN_MINUS: return "MINUS";
+        case TOKEN_STAR: return "STAR";
+        case TOKEN_SLASH: return "SLASH";
+        case TOKEN_EQUAL: return "EQUAL";
+        case TOKEN_BANG: return "BANG";
+        case TOKEN_BANG_EQUAL: return "BANG_EQUAL";
+        case TOKEN_LESS: return "LESS";
+        case TOKEN_LESS_EQUAL: return "LESS_EQUAL";
+        case TOKEN_GREATER: return "GREATER";
+        case TOKEN_GREATER_EQUAL: return "GREATER_EQUAL";
+        case TOKEN_LPAREN: return "LPAREN";
+        case TOKEN_RPAREN: return "RPAREN";
+        case TOKEN_LBRACE: return "LBRACE";
+        case TOKEN_RBRACE: return "RBRACE";
+        case TOKEN_COMMA: return "COMMA";
+        case TOKEN_SEMICOLON: return "SEMICOLON";
+        case TOKEN_EOF: return "EOF";
+        case TOKEN_UNKNOWN: return "UNKNOWN";
+        default: return "???";
+      }
+    }
+    
+    void print_token(Token token) {
+      printf("[Line %d] %-15s %s\n", token.line, token_type_to_string(token.type), token.lexeme);
+    }
+
+===== ./lexer.h =====
+    #ifndef LEXER_H
+    #define LEXER_H
+    
+    #include <stddef.h> // For size_t (used for lengths, arrays, etc.)
+    
+    // -----------------------------
+    // Token Types
+    // -----------------------------
+    typedef enum {
+      // Keywords
+      TOKEN_LET,
+      TOKEN_FN,
+      TOKEN_RETURN,
+      TOKEN_IF,
+      TOKEN_ELSE,
+      TOKEN_WHILE,
+      TOKEN_YAP,
+    
+      // Literals
+      TOKEN_IDENTIFIER, // Variable or function name
+      TOKEN_INT,        // Integer value
+      TOKEN_FLOAT,      // Float value (optional feature)
+    
+      // Operators
+      TOKEN_ASSIGN,         // =
+      TOKEN_PLUS,           // +
+      TOKEN_MINUS,          // -
+      TOKEN_STAR,           // *
+      TOKEN_SLASH,          // /
+      TOKEN_EQUAL,          // ==
+      TOKEN_BANG,           // !
+      TOKEN_BANG_EQUAL,     // !=
+      TOKEN_LESS,           // <
+      TOKEN_LESS_EQUAL,     // <=
+      TOKEN_GREATER,        // >
+      TOKEN_GREATER_EQUAL,  // >=
+    
+      // Delimiters
+      TOKEN_LPAREN,         // (
+      TOKEN_RPAREN,         // )
+      TOKEN_LBRACE,         // {
+      TOKEN_RBRACE,         // }
+      TOKEN_COMMA,          // ,
+      TOKEN_SEMICOLON,      // ;
+    
+      // Special
+      TOKEN_EOF,            // End of file/input
+      TOKEN_UNKNOWN         // For unrecognized tokens (error recovery)
+    } TokenType;
+    
+    // -----------------------------
+    // Token Structure
+    // -----------------------------
+    typedef struct {
+      TokenType type;  // What kind of token
+      char* lexeme;    // The actual string (e.g., "let", "123", "+")
+      int line;        // Line number in the source code
+    } Token;
+    
+    // -----------------------------
+    // Tokenizer API
+    // -----------------------------
+    
+    // Tokenize the source code into a dynamically allocated array of Tokens
+    // The number of tokens is stored in `token_count` (passed by reference)
+    Token* tokenize(const char* source, int* token_count);
+    
+    // Frees the memory allocated for the token array
+    void free_tokens(Token* tokens, int count);
+    
+    // Optional: Useful during debugging
+    const char* token_type_to_string(TokenType type); // Converts TokenType to readable string
+    void print_token(Token token);                   // Prints a single token's type and value
+    
+    #endif
+
+===== ./main.c =====
+    // main.c
+    #include <stdio.h>
+    #include <stdlib.h>
+    #include <string.h>
+    #include "lexer.h"
+    #include "parser.h"
+    #include "compiler.h"
+    #include "vm.h"
+    
+    char* read_file(const char* filename) {
+        FILE* file = fopen(filename, "rb");  // Open in binary mode
+        if (!file) {
+            perror("Failed to open file");
+            exit(1);
+        }
+    
+        fseek(file, 0, SEEK_END);
+        long length = ftell(file);
+        rewind(file);
+    
+        char* buffer = malloc(length + 2);  // slightly bigger
+        if (!buffer) {
+            perror("Failed to allocate buffer");
+            exit(1);
+        }
+    
+        size_t read_size = fread(buffer, 1, length, file);
+        buffer[read_size] = '\0';  // Safely null-terminate based on read size
+        fclose(file);
+        return buffer;
+    }
+    
+    // safe cleanup for extra whitespace:
+    void clean_source(char* src) {
+        int len = strlen(src);
+        while (len > 0 && (src[len - 1] == ' ' || src[len - 1] == '\n' || src[len - 1] == '\r' || src[len - 1] == '\t')) {
+            src[len - 1] = '\0';
+            len--;
+        }
+    }
+    
+    int main(int argc, char* argv[]) {
+        const char* filename = "start.jminus";
+        if (argc > 1) filename = argv[1];
+    
+        char* source = read_file(filename);
+        clean_source(source);
+        printf("---- SOURCE START ----\n%s\n---- SOURCE END ----\n", source);
+    
+        int token_count;
+        Token* tokens = tokenize(source, &token_count);
+    
+        int stmt_count;
+        Stmt** stmts = parse(tokens, token_count, &stmt_count);
+    
+        Bytecode* bytecode = compile(stmts, stmt_count);
+        run(bytecode);
+    
+        free_tokens(tokens, token_count);
+        free_bytecode(bytecode);
+        free(source);
+    
+        return 0;
+    }
+
+===== ./Makefile =====
+
+===== ./parser.c =====
+    #include <stdio.h>
+    #include <stdlib.h>
+    #include <string.h>
+    #include "parser.h"
+    
+    // ----------------------------
+    // Internal State
+    // ----------------------------
+    static Token* tokens;
+    static int current;
+    static int total;
+    
+    // ----------------------------
+    // Helpers
+    // ----------------------------
+    static Token peek() {
+        return tokens[current];
+    }
+    
+    static Token previous() {
+        return tokens[current - 1];
+    }
+    
+    static int is_at_end() {
+      return tokens[current].type == TOKEN_EOF;
+    }
+    
+    static Token advance() {
+        if (!is_at_end()) current++;
+        return previous();
+    }
+    
+    static int check(TokenType type) {
+        return !is_at_end() && tokens[current].type == type;
+    }
+    
+    static int match(TokenType type) {
+        if (check(type)) {
+            advance();
+            return 1;
+        }
+        return 0;
+    }
+    
+    
+    
+    void* allocate(size_t size) {
+        void* node = malloc(size);
+        if (!node) {
+            fprintf(stderr, "Memory allocation failed\n");
+            exit(1);
+        }
+        memset(node, 0, size);
+        return node;
+    }
+    
+    // ----------------------------
+    // Forward declarations
+    // ----------------------------
+    Expr* parse_expression();
+    Expr* parse_equality();
+    Expr* parse_comparison();
+    Expr* parse_term();
+    Expr* parse_factor();
+    Expr* parse_primary();
+    Stmt* parse_statement();
+    Stmt* parse_block_statement();
+    Stmt* parse_if_statement();
+    Stmt* parse_while_statement();
+    Stmt* parse_let_statement();
+    Stmt* parse_yap_statement();
+    
+    // ----------------------------
+    // Expression Parsing
+    // ----------------------------
+    Expr* parse_primary() {
+        if (match(TOKEN_INT)) {
+            LiteralExpr lit = { previous() };
+            Expr* expr = allocate(sizeof(Expr));
+            expr->type = EXPR_LITERAL;
+            expr->literal = lit;
+            return expr;
+        }
+    
+        if (match(TOKEN_IDENTIFIER)) {
+            VariableExpr var = { previous() };
+            Expr* expr = allocate(sizeof(Expr));
+            expr->type = EXPR_VARIABLE;
+            expr->variable = var;
+            return expr;
+        }
+    
+        if (match(TOKEN_LPAREN)) {
+            Expr* expr = parse_expression();
+            if (!match(TOKEN_RPAREN)) {
+                fprintf(stderr, "Expected ')' after expression\n");
+                exit(1);
+            }
+            return expr;
+        }
+    
+        fprintf(stderr, "Unexpected token: %s\n", peek().lexeme);
+        exit(1);
+    }
+    
+    Expr* parse_binary(Expr* (*next_fn)(), TokenType ops[], int op_count) {
+        Expr* left = next_fn();
+    
+        while (!is_at_end()) {
+            TokenType type = peek().type;
+            int matched = 0;
+            for (int i = 0; i < op_count; i++) {
+                if (type == ops[i]) {
+                    matched = 1;
+                    break;
+                }
+            }
+            if (!matched) break;
+    
+            Token op = advance();
+            Expr* right = next_fn();
+    
+            BinaryExpr bin = { left, op, right };
+            Expr* expr = allocate(sizeof(Expr));
+            expr->type = EXPR_BINARY;
+            expr->binary = bin;
+            left = expr;
+        }
+    
+        return left;
+    }
+    
+    Expr* parse_factor() {
+        TokenType ops[] = { TOKEN_STAR, TOKEN_SLASH };
+        return parse_binary(parse_primary, ops, 2);
+    }
+    
+    Expr* parse_term() {
+        TokenType ops[] = { TOKEN_PLUS, TOKEN_MINUS };
+        return parse_binary(parse_factor, ops, 2);
+    }
+    
+    Expr* parse_comparison() {
+        TokenType ops[] = { TOKEN_LESS, TOKEN_LESS_EQUAL, TOKEN_GREATER, TOKEN_GREATER_EQUAL };
+        return parse_binary(parse_term, ops, 4);
+    }
+    
+    Expr* parse_equality() {
+        TokenType ops[] = { TOKEN_EQUAL, TOKEN_BANG_EQUAL };
+        return parse_binary(parse_comparison, ops, 2);
+    }
+    
+    // changed to allow assignment
+    Expr* parse_expression() {
+      Expr* expr = parse_equality();
+    
+      // Handle assignment like `x = ...`
+      if (match(TOKEN_ASSIGN)) {
+          Token equals = previous();
+          Expr* value = parse_expression();
+    
+          if (expr->type != EXPR_VARIABLE) {
+              fprintf(stderr, "Invalid assignment target.\n");
+              exit(1);
+          }
+    
+          // Build a binary '=' expression
+          BinaryExpr bin = { expr, equals, value };
+          Expr* assignment = allocate(sizeof(Expr));
+          assignment->type = EXPR_BINARY;
+          assignment->binary = bin;
+          return assignment;
+      }
+    
+      return expr;
+    }
+    
+    
+    // ----------------------------
+    // Statement Parsing
+    // ----------------------------
+    Stmt* parse_let_statement() {
+        if (!match(TOKEN_IDENTIFIER)) {
+            fprintf(stderr, "Expected variable name after 'let'\n");
+            exit(1);
+        }
+        Token name = previous();
+    
+        if (!match(TOKEN_ASSIGN)) {
+            fprintf(stderr, "Expected '=' after variable name\n");
+            exit(1);
+        }
+    
+        Expr* initializer = parse_expression();
+    
+        if (!match(TOKEN_SEMICOLON)) {
+            fprintf(stderr, "Expected ';' after let initializer\n");
+            exit(1);
+        }
+    
+        LetStmt let = { name, initializer };
+        Stmt* stmt = allocate(sizeof(Stmt));
+        stmt->type = STMT_LET;
+        stmt->let = let;
+        return stmt;
+    }
+    
+    Stmt* parse_yap_statement() {
+        if (!match(TOKEN_LPAREN)) {
+            fprintf(stderr, "Expected '(' after 'yap'\n");
+            exit(1);
+        }
+    
+        Expr* expr = parse_expression();
+    
+        if (!match(TOKEN_RPAREN)) {
+            fprintf(stderr, "Expected ')' after yap expression\n");
+            exit(1);
+        }
+    
+        if (!match(TOKEN_SEMICOLON)) {
+            fprintf(stderr, "Expected ';' after yap statement\n");
+            exit(1);
+        }
+    
+        YapStmt yap = { expr };
+        Stmt* stmt = allocate(sizeof(Stmt));
+        stmt->type = STMT_YAP;
+        stmt->yap = yap;
+        return stmt;
+    }
+    
+    Stmt* parse_if_statement() {
+        if (!match(TOKEN_LPAREN)) {
+            fprintf(stderr, "Expected '(' after 'if'\n");
+            exit(1);
+        }
+    
+        Expr* condition = parse_expression();
+    
+        if (!match(TOKEN_RPAREN)) {
+            fprintf(stderr, "Expected ')' after condition\n");
+            exit(1);
+        }
+    
+        Stmt* then_branch = parse_statement();
+        Stmt* else_branch = NULL;
+    
+        if (match(TOKEN_ELSE)) {
+            else_branch = parse_statement();
+        }
+    
+        IfStmt if_stmt = { condition, then_branch, else_branch };
+        Stmt* stmt = allocate(sizeof(Stmt));
+        stmt->type = STMT_IF;
+        stmt->if_stmt = if_stmt;
+        return stmt;
+    }
+    
+    Stmt* parse_while_statement() {
+        if (!match(TOKEN_LPAREN)) {
+            fprintf(stderr, "Expected '(' after 'while'\n");
+            exit(1);
+        }
+    
+        Expr* condition = parse_expression();
+    
+        if (!match(TOKEN_RPAREN)) {
+            fprintf(stderr, "Expected ')' after while condition\n");
+            exit(1);
+        }
+    
+        Stmt* body = parse_statement();
+    
+        WhileStmt while_stmt = { condition, body };
+        Stmt* stmt = allocate(sizeof(Stmt));
+        stmt->type = STMT_WHILE;
+        stmt->while_stmt = while_stmt;
+        return stmt;
+    }
+    
+    Stmt* parse_block_statement() {
+        Stmt** statements = allocate(sizeof(Stmt*) * 128);
+        int count = 0;
+    
+        while (!check(TOKEN_RBRACE) && !is_at_end()) {
+            statements[count++] = parse_statement();
+        }
+    
+        if (!match(TOKEN_RBRACE)) {
+            fprintf(stderr, "Expected '}' after block\n");
+            exit(1);
+        }
+    
+        BlockStmt block = { statements, count };
+        Stmt* stmt = allocate(sizeof(Stmt));
+        stmt->type = STMT_BLOCK;
+        stmt->block = block;
+        return stmt;
+    }
+    
+    Stmt* parse_statement() {
+        if (match(TOKEN_LET)) return parse_let_statement();
+        if (match(TOKEN_YAP)) return parse_yap_statement();
+        if (match(TOKEN_IF)) return parse_if_statement();
+        if (match(TOKEN_WHILE)) return parse_while_statement();
+        if (match(TOKEN_LBRACE)) return parse_block_statement();
+    
+        // Otherwise just an expression statement
+        Expr* expr = parse_expression();
+        if (!match(TOKEN_SEMICOLON)) {
+            fprintf(stderr, "Expected ';' after expression\n");
+            exit(1);
+        }
+    
+        ExprStmt expr_stmt = { expr };
+        Stmt* stmt = allocate(sizeof(Stmt));
+        stmt->type = STMT_EXPR;
+        stmt->expr = expr_stmt;
+        return stmt;
+    }
+    
+    // ----------------------------
+    // Entry point
+    // ----------------------------
+    Stmt** parse(Token* token_array, int token_count, int* stmt_count) {
+        tokens = token_array;
+        current = 0;
+        total = token_count;
+    
+        Stmt** stmts = allocate(sizeof(Stmt*) * 128);
+        int count = 0;
+    
+        while (!is_at_end()) {
+            stmts[count++] = parse_statement();
+        }
+    
+        *stmt_count = count;
+        return stmts;
+    }
+    
+    // ----------------------------
+    // Debug Printing
+    // ----------------------------
+    void print_indent(int indent) {
+        for (int i = 0; i < indent; i++) printf("  ");
+    }
+    
+    void print_expr(Expr* expr, int indent) {
+        if (!expr) return;
+    
+        switch (expr->type) {
+            case EXPR_LITERAL:
+                print_indent(indent);
+                printf("Literal: %s\n", expr->literal.value.lexeme);
+                break;
+            case EXPR_VARIABLE:
+                print_indent(indent);
+                printf("Variable: %s\n", expr->variable.name.lexeme);
+                break;
+            case EXPR_BINARY:
+                print_indent(indent);
+                printf("Binary: %s\n", expr->binary.op.lexeme);
+                print_expr(expr->binary.left, indent + 1);
+                print_expr(expr->binary.right, indent + 1);
+                break;
+            case EXPR_CALL:
+                print_indent(indent);
+                printf("Call:\n");
+                print_expr(expr->call.callee, indent + 1);
+                for (int i = 0; i < expr->call.arg_count; i++) {
+                    print_expr(expr->call.args[i], indent + 1);
+                }
+                break;
+        }
+    }
+    
+    void print_stmt(Stmt* stmt, int indent) {
+        if (!stmt) return;
+    
+        switch (stmt->type) {
+            case STMT_EXPR:
+                print_indent(indent);
+                printf("ExprStmt:\n");
+                print_expr(stmt->expr.expression, indent + 1);
+                break;
+            case STMT_LET:
+                print_indent(indent);
+                printf("LetStmt: %s\n", stmt->let.name.lexeme);
+                print_expr(stmt->let.initializer, indent + 1);
+                break;
+            case STMT_YAP:
+                print_indent(indent);
+                printf("YapStmt:\n");
+                print_expr(stmt->yap.expression, indent + 1);
+                break;
+            case STMT_IF:
+                print_indent(indent);
+                printf("IfStmt:\n");
+                print_indent(indent + 1);
+                printf("Condition:\n");
+                print_expr(stmt->if_stmt.condition, indent + 2);
+                print_indent(indent + 1);
+                printf("Then:\n");
+                print_stmt(stmt->if_stmt.then_branch, indent + 2);
+                if (stmt->if_stmt.else_branch) {
+                    print_indent(indent + 1);
+                    printf("Else:\n");
+                    print_stmt(stmt->if_stmt.else_branch, indent + 2);
+                }
+                break;
+            case STMT_WHILE:
+                print_indent(indent);
+                printf("WhileStmt:\n");
+                print_indent(indent + 1);
+                printf("Condition:\n");
+                print_expr(stmt->while_stmt.condition, indent + 2);
+                print_indent(indent + 1);
+                printf("Body:\n");
+                print_stmt(stmt->while_stmt.body, indent + 2);
+                break;
+            case STMT_BLOCK:
+                print_indent(indent);
+                printf("BlockStmt:\n");
+                for (int i = 0; i < stmt->block.count; i++) {
+                    print_stmt(stmt->block.statements[i], indent + 1);
+                }
+                break;
+        }
+    }
+
+===== ./parser.h =====
+    #ifndef PARSER_H
+    #define PARSER_H
+    
+    #include "lexer.h"
+    
+    // ----------------------------
+    // Expression Types
+    // ----------------------------
+    typedef enum {
+        EXPR_LITERAL,
+        EXPR_VARIABLE,
+        EXPR_BINARY,
+        EXPR_CALL
+    } ExprType;
+    
+    typedef struct Expr Expr;  // Forward declare for self-referencing
+    
+    typedef struct {
+        Token value;  // e.g., a number like 5
+    } LiteralExpr;
+    
+    typedef struct {
+        Token name;  // e.g., a variable like x
+    } VariableExpr;
+    
+    typedef struct {
+        Expr* left;
+        Token op;
+        Expr* right;
+    } BinaryExpr;
+    
+    typedef struct {
+        Expr* callee;
+        Expr** args;
+        int arg_count;
+    } CallExpr;
+    
+    struct Expr {
+        ExprType type;
+        union {
+            LiteralExpr literal;
+            VariableExpr variable;
+            BinaryExpr binary;
+            CallExpr call;
+        };
+    };
+    
+    // ----------------------------
+    // Statement Types
+    // ----------------------------
+    typedef enum {
+        STMT_EXPR,
+        STMT_LET,
+        STMT_YAP,
+        STMT_IF,
+        STMT_WHILE,
+        STMT_BLOCK
+    } StmtType;
+    
+    typedef struct Stmt Stmt;
+    
+    typedef struct {
+        Token name;
+        Expr* initializer;
+    } LetStmt;
+    
+    typedef struct {
+        Expr* expression;
+    } ExprStmt;
+    
+    typedef struct {
+        Expr* expression;
+    } YapStmt;
+    
+    typedef struct {
+        Expr* condition;
+        Stmt* then_branch;
+        Stmt* else_branch;  // optional
+    } IfStmt;
+    
+    typedef struct {
+        Expr* condition;
+        Stmt* body;
+    } WhileStmt;
+    
+    typedef struct {
+        Stmt** statements;
+        int count;
+    } BlockStmt;
+    
+    struct Stmt {
+        StmtType type;
+        union {
+            LetStmt let;
+            ExprStmt expr;
+            YapStmt yap;
+            IfStmt if_stmt;
+            WhileStmt while_stmt;
+            BlockStmt block;
+        };
+    };
+    
+    // ----------------------------
+    // Functions
+    // ----------------------------
+    Stmt** parse(Token* tokens, int token_count, int* stmt_count);
+    void print_stmt(Stmt* stmt, int indent);
+    
+    #endif // PARSER_H
+
+===== ./start.jminus =====
+    let x = 0;
+    
+    while (x < 3) {
+        yap(x);
+        x = x + 1;
+    }
+    
+    if (x == 3) {
+        yap(999);
+    } else {
+        yap(0);  
+    }
+
+===== ./vm.c =====
+    // vm.c
+    #include <stdio.h>
+    #include <stdlib.h>
+    #include "vm.h"
+    #include "compiler.h"
+    #include "interpreter.h" // For lookup_variable and assign_variable
+    
+    void run(Bytecode* bytecode) {
+        int stack[256];
+        int sp = 0;
+    
+        int ip = 0; // Instruction Pointer
+        while (1) {
+            Instruction instr = bytecode->instructions[ip++];
+            switch (instr.opcode) {
+                case BC_CONST:
+                    stack[sp++] = bytecode->constants[instr.operand];
+                    break;
+    
+                case BC_LOAD_VAR: {
+                    char varname[2] = { instr.operand, '\0' };
+                    stack[sp++] = lookup_variable(varname);
+                    break;
+                }
+    
+                case BC_SET_VAR: {
+                    char varname[2] = { instr.operand, '\0' };
+                    assign_variable(varname, stack[--sp]);
+                    break;
+                }
+    
+                case BC_STORE_VAR: {
+                    char varname[2] = { instr.operand, '\0' };
+                    assign_variable(varname, stack[--sp]);
+                    break;
+                }
+    
+                case BC_ADD:
+                    stack[sp - 2] = stack[sp - 2] + stack[sp - 1];
+                    sp--;
+                    break;
+    
+                case BC_SUB:
+                    stack[sp - 2] = stack[sp - 2] - stack[sp - 1];
+                    sp--;
+                    break;
+    
+                case BC_MUL:
+                    stack[sp - 2] = stack[sp - 2] * stack[sp - 1];
+                    sp--;
+                    break;
+    
+                case BC_DIV:
+                    stack[sp - 2] = stack[sp - 2] / stack[sp - 1];
+                    sp--;
+                    break;
+    
+                case BC_EQUAL:
+                    stack[sp - 2] = (stack[sp - 2] == stack[sp - 1]);
+                    sp--;
+                    break;
+    
+                case BC_NOT_EQUAL:
+                    stack[sp - 2] = (stack[sp - 2] != stack[sp - 1]);
+                    sp--;
+                    break;
+    
+                case BC_LESS:
+                    stack[sp - 2] = (stack[sp - 2] < stack[sp - 1]);
+                    sp--;
+                    break;
+    
+                case BC_LESS_EQUAL:
+                    stack[sp - 2] = (stack[sp - 2] <= stack[sp - 1]);
+                    sp--;
+                    break;
+    
+                case BC_GREATER:
+                    stack[sp - 2] = (stack[sp - 2] > stack[sp - 1]);
+                    sp--;
+                    break;
+    
+                case BC_GREATER_EQUAL:
+                    stack[sp - 2] = (stack[sp - 2] >= stack[sp - 1]);
+                    sp--;
+                    break;
+    
+                case BC_PRINT:
+                    printf("%d\n", stack[--sp]);
+                    break;
+    
+                case BC_POP:
+                    sp--;
+                    break;
+    
+                case BC_JUMP_IF_FALSE: {
+                    int condition = stack[--sp];
+                    if (!condition) {
+                        ip = instr.operand;
+                    }
+                    break;
+                }
+    
+                case BC_JUMP:
+                    ip = instr.operand;
+                    break;
+    
+                case BC_HALT:
+                    return;
+    
+                default:
+                    fprintf(stderr, "Unknown opcode: %d\n", instr.opcode);
+                    exit(1);
+            }
+        }
+    }
+
+===== ./vm.h =====
+    #ifndef VM_H
+    #define VM_H
+    
+    #include "compiler.h"
+    
+    void run(Bytecode* bytecode); // <- Make sure it's void, not int!
+    
+    #endif

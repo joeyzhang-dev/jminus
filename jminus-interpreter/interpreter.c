@@ -46,26 +46,36 @@ int eval_expr(Expr* expr) {
         case EXPR_VARIABLE:
             return lookup_variable(expr->variable.name.lexeme);
 
-        case EXPR_BINARY: {
-            int left = eval_expr(expr->binary.left);
-            int right = eval_expr(expr->binary.right);
-            const char* op = expr->binary.op.lexeme;
-
-            if (strcmp(op, "+") == 0) return left + right;
-            if (strcmp(op, "-") == 0) return left - right;
-            if (strcmp(op, "*") == 0) return left * right;
-            if (strcmp(op, "/") == 0) return left / right;
-            if (strcmp(op, "==") == 0) return left == right;
-            if (strcmp(op, "!=") == 0) return left != right;
-            if (strcmp(op, "<")  == 0) return left < right;
-            if (strcmp(op, "<=") == 0) return left <= right;
-            if (strcmp(op, ">")  == 0) return left > right;
-            if (strcmp(op, ">=") == 0) return left >= right;
-
-
-            fprintf(stderr, "Unknown binary operator: %s\n", op);
-            exit(1);
-        }
+            case EXPR_BINARY: {
+                int left_value = eval_expr(expr->binary.left);
+                int right_value = eval_expr(expr->binary.right);
+                const char* op = expr->binary.op.lexeme;
+            
+                if (strcmp(op, "+") == 0) return left_value + right_value;
+                if (strcmp(op, "-") == 0) return left_value - right_value;
+                if (strcmp(op, "*") == 0) return left_value * right_value;
+                if (strcmp(op, "/") == 0) return left_value / right_value;
+                if (strcmp(op, "==") == 0) return left_value == right_value;
+                if (strcmp(op, "!=") == 0) return left_value != right_value;
+                if (strcmp(op, "<") == 0) return left_value < right_value;
+                if (strcmp(op, "<=") == 0) return left_value <= right_value;
+                if (strcmp(op, ">") == 0) return left_value > right_value;
+                if (strcmp(op, ">=") == 0) return left_value >= right_value;
+            
+                if (strcmp(op, "=") == 0) {
+                    if (expr->binary.left->type != EXPR_VARIABLE) {
+                        fprintf(stderr, "Invalid assignment target\n");
+                        exit(1);
+                    }
+                    const char* name = expr->binary.left->variable.name.lexeme;
+                    assign_variable(name, right_value);
+                    return right_value;
+                }
+            
+                fprintf(stderr, "Unknown binary operator: %s\n", op);
+                exit(1);
+            }
+            
 
         default:
             fprintf(stderr, "Unknown expression type\n");

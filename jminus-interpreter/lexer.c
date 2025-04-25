@@ -68,7 +68,7 @@ Token* tokenize(const char* src, int* token_count) {
   printf("Lexing source code...\n");
 #endif
 
-  while (*current != '\0') {
+while (*current != '\0' && *current != EOF) {
 #ifdef DEBUG
     printf("  Char: '%c' (ASCII %d) at line %d\n", *current, *current, line);
 #endif
@@ -171,12 +171,15 @@ Token* tokenize(const char* src, int* token_count) {
   *token_count = count;
 
   if (unexpected_count > 0) {
-    printf("\nSummary of unexpected tokens:\n");
+    printf("\n!!! Lexing error: unexpected characters found in source code!\n");
     for (int i = 0; i < unexpected_count; i++) {
-        printf("  Unexpected token: '%c' at line %d\n",
+        printf("  -> Unexpected character '%c' at line %d\n",
                unexpected_tokens[i].ch, unexpected_tokens[i].line);
     }
+    printf("\nHint: Check your source file.\n\n");
+    exit(1); // Force exit because source is invalid
 }
+
 
   return tokens;
 }
