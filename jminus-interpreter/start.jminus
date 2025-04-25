@@ -33,4 +33,4 @@ fn square(n) {
   return n * n;
 }
 
-print(square(4));
+yap(square(4));
