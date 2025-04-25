@@ -1,36 +1,42 @@
-# J- Interpreter (Written in C)
+// Test: Variable declaration and arithmetic
+let a = 10;
+let b = 5;
+let c = a + b * 2 - 3;
+yap(c); // Expect: 17
 
-**J-** is a minimal, JavaScript-inspired interpreted language designed for simplicity and learning.  
-This project implements a full interpreter for J- in C, including lexing, parsing, compiling to bytecode, and executing with a stack-based virtual machine.
-
----
-
-## 🔧 Features
-
-- 📄 Tokenizer (Lexer) — Converts source code to tokens  
-- 🌲 Parser — Builds an Abstract Syntax Tree (AST) from tokens  
-- 🧠 Bytecode Compiler — Translates AST into bytecode instructions  
-- 💻 Stack-based Virtual Machine — Executes bytecode using a custom VM  
-- 🧠 Variables and Arithmetic  
-- 🔁 While Loops and Conditional Statements  
-- 🗣️ Print Statements  
-- ⚙️ Function Definitions and Calls  
-- 🚧 (Planned) Garbage Collection and more advanced language features
-
----
-
-## 📄 Example J- Code
-
-```jminus
-let x = 0;
-
-while (x < 5) {
-  print(x);
-  x = x + 1;
+// Test: Conditional statement
+if (c > 15) {
+  yap(100);
 }
 
-fn square(n) {
-  return n * n;
+// Test: While loop
+let count = 0;
+while (count < 3) {
+  yap(count);
+  count = count + 1;
 }
 
-yap(square(4));
+// Test: Function definition and call
+fn multiply(x, y) {
+  return x * y;
+}
+
+let result = multiply(4, 5);
+yap(result); // Expect: 20
+
+// Test: Function with conditional logic
+fn max(x, y) {
+  if (x > y) {
+    return x;
+  }
+  return y;
+}
+
+yap(max(7, 9)); // Expect: 9
+
+// Test: Nested expressions
+let complex = (2 + 3) * (4 - 1);
+yap(complex); // Expect: 15
+
+// Done
+yap(999);
