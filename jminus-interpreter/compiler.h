@@ -19,6 +19,7 @@ typedef enum {
     BC_NOT_EQUAL,
     BC_LESS,
     BC_LESS_EQUAL,
+    BC_LOAD_CONST,
     BC_GREATER,
     BC_GREATER_EQUAL,
     BC_JUMP_IF_FALSE,
