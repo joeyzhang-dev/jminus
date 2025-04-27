@@ -34,7 +34,7 @@ This project was built from scratch to learn:
 ### 1. Build the project
 
 ```bash
-make // run in interpreter folder with MSYS2 Bash
+make # run in interpreter folder with MSYS2 Bash
 ```
 
 ### 2. Start the REPL (interactive shell)
