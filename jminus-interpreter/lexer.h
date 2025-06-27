@@ -1,75 +1,156 @@
+/**
+ * @file lexer.h
+ * @brief Lexical analyzer (tokenizer) for the jminus language
+ * @author Joey Zhang
+ * @version 1.0.0
+ * 
+ * The lexer converts source code text into a stream of tokens.
+ * Each token represents a meaningful unit of the language:
+ * - Keywords (let, if, while, etc.)
+ * - Identifiers (variable names)
+ * - Literals (numbers)
+ * - Operators (+, -, *, /, etc.)
+ * - Delimiters (parentheses, braces, semicolons)
+ * 
+ * Token Structure:
+ * - type: The kind of token (keyword, identifier, etc.)
+ * - lexeme: The actual text that was tokenized
+ * - line: Source line number for error reporting
+ * 
+ * Lexical Analysis Process:
+ * 1. Scan source code character by character
+ * 2. Identify token boundaries based on language rules
+ * 3. Classify each token according to its content
+ * 4. Track line numbers for error reporting
+ * 5. Handle whitespace and comments appropriately
+ * 
+ * Error Handling:
+ * - Invalid characters are reported with line numbers
+ * - Unterminated strings/literals are detected
+ * - Lexical errors don't stop the entire process
+ */
+
 #ifndef LEXER_H
 #define LEXER_H
 
-#include <stddef.h> // For size_t (used for lengths, arrays, etc.)
-
-// -----------------------------
-// Token Types
-// -----------------------------
+/**
+ * @brief Enumeration of all possible token types in jminus
+ * 
+ * Token types are organized into categories:
+ * - Keywords: Language-specific reserved words
+ * - Literals: Constant values (numbers, strings)
+ * - Operators: Mathematical and logical operators
+ * - Delimiters: Punctuation that structures the language
+ * - Special: End-of-file and error markers
+ */
 typedef enum {
-  // Keywords
-  TOKEN_LET,
-  TOKEN_FN,
-  TOKEN_RETURN,
-  TOKEN_IF,
-  TOKEN_ELSE,
-  TOKEN_WHILE,
-  TOKEN_YAP,
-
-  // Literals
-  TOKEN_IDENTIFIER, // Variable or function name
-  TOKEN_INT,        // Integer value
-  TOKEN_FLOAT,      // Float value (optional feature)
-
-  // Operators
-  TOKEN_ASSIGN,         // =
-  TOKEN_PLUS,           // +
-  TOKEN_MINUS,          // -
-  TOKEN_STAR,           // *
-  TOKEN_SLASH,          // /
-  TOKEN_EQUAL,          // ==
-  TOKEN_BANG,           // !
-  TOKEN_BANG_EQUAL,     // !=
-  TOKEN_LESS,           // <
-  TOKEN_LESS_EQUAL,     // <=
-  TOKEN_GREATER,        // >
-  TOKEN_GREATER_EQUAL,  // >=
-
-  // Delimiters
-  TOKEN_LPAREN,         // (
-  TOKEN_RPAREN,         // )
-  TOKEN_LBRACE,         // {
-  TOKEN_RBRACE,         // }
-  TOKEN_COMMA,          // ,
-  TOKEN_SEMICOLON,      // ;
-
-  // Special
-  TOKEN_EOF,            // End of file/input
-  TOKEN_UNKNOWN         // For unrecognized tokens (error recovery)
+    // Keywords - Reserved words with special meaning
+    TOKEN_LET,      ///< Variable declaration: let x = 5;
+    TOKEN_IF,       ///< Conditional statement: if (condition) { ... }
+    TOKEN_ELSE,     ///< Alternative branch: else { ... }
+    TOKEN_WHILE,    ///< Loop statement: while (condition) { ... }
+    TOKEN_YAP,      ///< Print function: yap(expression);
+    
+    // Literals - Constant values
+    TOKEN_INT,      ///< Integer literal: 42, -17, 0
+    
+    // Identifiers - Variable and function names
+    TOKEN_IDENTIFIER, ///< Variable name: x, myVar, counter
+    
+    // Operators - Mathematical and logical operations
+    TOKEN_PLUS,     ///< Addition: +
+    TOKEN_MINUS,    ///< Subtraction: -
+    TOKEN_STAR,     ///< Multiplication: *
+    TOKEN_SLASH,    ///< Division: /
+    TOKEN_ASSIGN,   ///< Assignment: =
+    TOKEN_EQUAL,    ///< Equality comparison: ==
+    TOKEN_NOT_EQUAL, ///< Inequality comparison: !=
+    TOKEN_LESS,     ///< Less than: <
+    TOKEN_LESS_EQUAL, ///< Less than or equal: <=
+    TOKEN_GREATER,  ///< Greater than: >
+    TOKEN_GREATER_EQUAL, ///< Greater than or equal: >=
+    
+    // Delimiters - Punctuation that structures the language
+    TOKEN_LPAREN,   ///< Left parenthesis: (
+    TOKEN_RPAREN,   ///< Right parenthesis: )
+    TOKEN_LBRACE,   ///< Left brace: {
+    TOKEN_RBRACE,   ///< Right brace: }
+    TOKEN_SEMICOLON, ///< Statement terminator: ;
+    
+    // Special tokens
+    TOKEN_EOF,      ///< End of file marker
+    TOKEN_ERROR     ///< Error token for invalid input
 } TokenType;
 
-// -----------------------------
-// Token Structure
-// -----------------------------
+/**
+ * @brief Represents a single token in the source code
+ * 
+ * A token is the smallest meaningful unit of the language.
+ * The lexer produces a stream of tokens that the parser consumes.
+ * 
+ * Fields:
+ * - type: The category of the token (keyword, operator, etc.)
+ * - lexeme: The actual text that was tokenized
+ * - line: Source line number for error reporting and debugging
+ */
 typedef struct {
-  TokenType type;  // What kind of token
-  char* lexeme;    // The actual string (e.g., "let", "123", "+")
-  int line;        // Line number in the source code
+    TokenType type;     ///< The type/category of this token
+    const char* lexeme; ///< The actual text that was tokenized
+    int line;           ///< Source line number (1-indexed)
 } Token;
 
-// -----------------------------
-// Tokenizer API
-// -----------------------------
-
-// Tokenize the source code into a dynamically allocated array of Tokens
-// The number of tokens is stored in `token_count` (passed by reference)
+/**
+ * @brief Converts source code string into an array of tokens
+ * @param source The source code to tokenize
+ * @param token_count Pointer to store the number of tokens generated
+ * @return Array of tokens (caller must free with free_tokens())
+ * 
+ * This function performs lexical analysis on the source code:
+ * 1. Scans the source string character by character
+ * 2. Identifies token boundaries based on language rules
+ * 3. Creates Token structures for each meaningful unit
+ * 4. Tracks line numbers for error reporting
+ * 5. Returns a dynamically allocated array of tokens
+ * 
+ * Tokenization Rules:
+ * - Keywords are recognized by exact string matches
+ * - Identifiers start with a letter and contain letters/digits
+ * - Numbers are sequences of digits (integers only)
+ * - Operators are single or double characters
+ * - Whitespace separates tokens but is not tokenized
+ * - Line numbers are tracked for error reporting
+ * 
+ * Memory Management:
+ * - Returns dynamically allocated array of tokens
+ * - Caller is responsible for freeing with free_tokens()
+ * - Lexeme strings point into the original source (no copying)
+ * 
+ * Error Handling:
+ * - Invalid characters produce TOKEN_ERROR tokens
+ * - Line numbers are preserved for error reporting
+ * - Tokenization continues despite individual errors
+ */
 Token* tokenize(const char* source, int* token_count);
 
-// Frees the memory allocated for the token array
+/**
+ * @brief Frees memory allocated for token array
+ * @param tokens Array of tokens to free
+ * @param count Number of tokens in the array
+ * 
+ * This function deallocates the memory used by the token array.
+ * Note that lexeme strings are not freed since they point into
+ * the original source code string.
+ */
 void free_tokens(Token* tokens, int count);
 
-// Optional: Useful during debugging
-const char* token_type_to_string(TokenType type); // Converts TokenType to readable string
-void print_token(Token token);                   // Prints a single token's type and value
+/**
+ * @brief Converts a token type to a human-readable string
+ * @param type The token type to convert
+ * @return String representation of the token type
+ * 
+ * This function is primarily used for debugging and error reporting.
+ * It provides a readable name for each token type.
+ */
+const char* token_type_to_string(TokenType type);
 
-#endif
+#endif // LEXER_H 
