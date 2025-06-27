@@ -80,7 +80,7 @@ static void compile_stmt(Stmt* stmt) {
         case STMT_LET: {
             compile_expr(stmt->let.initializer);
             int var_id = stmt->let.name.lexeme[0];
-            emit(BC_SET_VAR, var_id);
+            emit(BC_DEFINE_VAR, var_id);
             break;
         }
         case STMT_YAP: {

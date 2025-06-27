@@ -2,37 +2,30 @@
 #include <stdlib.h>
 #include <string.h>
 #include "interpreter.h"
+#include "environment.h"
 
-// Simple variable storage
-typedef struct {
-    const char* name;
-    int value;
-} Variable;
-
-#define MAX_VARS 128
-static Variable vars[MAX_VARS];
-static int var_count = 0;
+// Global environment for the interpreter
+static Environment* global_env = NULL;
 
 int lookup_variable(const char* name) {
-    for (int i = 0; i < var_count; i++) {
-        if (strcmp(vars[i].name, name) == 0) {
-            return vars[i].value;
-        }
+    if (!global_env) {
+        global_env = new_environment(NULL);
     }
-    fprintf(stderr, "Undefined variable: %s\n", name);
-    exit(1);
+    return lookup_var(global_env, name);
 }
 
 void assign_variable(const char* name, int value) {
-    for (int i = 0; i < var_count; i++) {
-        if (strcmp(vars[i].name, name) == 0) {
-            vars[i].value = value;
-            return;
-        }
+    if (!global_env) {
+        global_env = new_environment(NULL);
     }
-    vars[var_count].name = strdup(name);
-    vars[var_count].value = value;
-    var_count++;
+    assign_var(global_env, name, value);
+}
+
+void define_variable(const char* name, int value) {
+    if (!global_env) {
+        global_env = new_environment(NULL);
+    }
+    define_var(global_env, name, value);
 }
 
 // ------------------
@@ -83,8 +76,8 @@ void exec_stmt(Stmt* stmt) {
         case STMT_LET: {
             const char* name = stmt->let.name.lexeme;
             int value = eval_expr(stmt->let.initializer);
-            assign_variable(name, value);
-            printf("Assigned variable %s = %d\n", name, value);  // Debugging output
+            define_variable(name, value);
+            printf("Defined variable %s = %d\n", name, value);  // Debugging output
             break;
         }
 

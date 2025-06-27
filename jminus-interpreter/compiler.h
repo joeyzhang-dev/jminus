@@ -14,6 +14,7 @@ typedef enum {
     BC_PRINT,
     BC_LOAD_VAR,
     BC_SET_VAR,
+    BC_DEFINE_VAR,  // New instruction for variable definition
     BC_STORE_VAR,      
     BC_EQUAL,
     BC_NOT_EQUAL,

@@ -22,11 +22,11 @@ void print_help() {
     printf(COLOR_CYAN "Available commands:\n" COLOR_GREEN);
     printf("  :help         Show this help message\n");
     printf("  :exit         Exit the REPL\n");
-    printf("  :interp;      Interpreter mode\n");
-    printf("  :vm;          Compile + VM mode\n");
+    printf("  :interp       Switch to interpreter mode\n");
+    printf("  :vm           Switch to VM mode (default)\n");
     printf("  let x = 3;    Declare variables\n");
     printf("  yap(x);       Print variables or expressions\n");
-    printf("  Supports: if, while, blocks {}\n\n " COLOR_RESET);
+    printf("  Supports: if, while, blocks {}\n\n" COLOR_RESET);
 }
 
 void clean_line(char* line) {
@@ -38,9 +38,9 @@ void clean_line(char* line) {
 
 int main(void) {
     char line[LINE_BUF];
+    int mode = 1; // 0 = interpreter, 1 = VM (default)
 
     printf(COLOR_GREEN COLOR_BOLD "Welcome to jminus REPL 🚀\n" COLOR_RESET);
-
     printf(COLOR_CYAN "Type :help for available commands.\n\n" COLOR_RESET);
 
     while (1) {
@@ -53,6 +53,16 @@ int main(void) {
             print_help();
             continue;
         }
+        if (strcmp(line, ":interp") == 0) {
+            mode = 0;
+            printf(COLOR_GREEN "Switched to interpreter mode\n" COLOR_RESET);
+            continue;
+        }
+        if (strcmp(line, ":vm") == 0) {
+            mode = 1;
+            printf(COLOR_GREEN "Switched to VM mode\n" COLOR_RESET);
+            continue;
+        }
         if (strlen(line) == 0) continue;
 
         int token_count = 0;
@@ -61,24 +71,32 @@ int main(void) {
         int stmt_count = 0;
         Stmt** stmts = NULL;
 
-        // parse with basic error handling
+        // parse with error handling
         stmts = parse(tokens, token_count, &stmt_count);
         if (!stmts) {
+            printf(COLOR_RED "Parse error - check your syntax\n" COLOR_RESET);
             free_tokens(tokens, token_count);
             continue;
         }
 
-        // interpreter (debug output)
-        interpret(stmts, stmt_count);
-
-        // bytecode compiler + VM execution
-        Bytecode* bc = compile(stmts, stmt_count);
-        run(bc);
+        // Execute based on selected mode
+        if (mode == 0) {
+            // Interpreter mode
+            interpret(stmts, stmt_count);
+        } else {
+            // VM mode (default)
+            Bytecode* bc = compile(stmts, stmt_count);
+            if (bc) {
+                run(bc);
+                free_bytecode(bc);
+            } else {
+                printf(COLOR_RED "Compilation error\n" COLOR_RESET);
+            }
+        }
 
         // cleanup
         free_tokens(tokens, token_count);
         free_ast(stmts, stmt_count);
-        free_bytecode(bc);
     }
 
     puts(COLOR_GREEN "\nGoodbye 👋" COLOR_RESET);

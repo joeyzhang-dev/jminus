@@ -16,7 +16,16 @@ void free_environment(Environment* env) {
 }
 
 void define_var(Environment* env, const char* name, int value) {
-    env->entries[env->count].name = name;
+    // Check if variable already exists in this scope
+    for (int i = env->count - 1; i >= 0; i--) {
+        if (strcmp(env->entries[i].name, name) == 0) {
+            // Variable exists, just update its value
+            env->entries[i].value = value;
+            return;
+        }
+    }
+    // Variable doesn't exist, add it to this scope
+    env->entries[env->count].name = strdup(name);  // Duplicate the name
     env->entries[env->count].value = value;
     env->count++;
 }

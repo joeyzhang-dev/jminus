@@ -3,16 +3,27 @@
 #include <stdlib.h>
 #include "vm.h"
 #include "interpreter.h"
+#include "environment.h"
 
 #define STACK_SIZE 1024
 
 static int stack[STACK_SIZE];
 static int sp = 0;  // stack pointer
+static Environment* vm_env = NULL;  // VM's environment
+
+// Output function pointer for BC_PRINT
+void vm_default_output(int value) { printf("%d\n", value); }
+void (*vm_output)(int value) = vm_default_output;
 
 void run(Bytecode* bytecode) {
     Instruction* code = bytecode->instructions;
     int ip = 0;
     sp = 0;
+    
+    // Initialize VM environment if not already done
+    if (!vm_env) {
+        vm_env = new_environment(NULL);
+    }
 
     while (1) {
         Instruction instr = code[ip++];
@@ -91,7 +102,7 @@ void run(Bytecode* bytecode) {
                 // operand is the ASCII code of the single‐char var name
                 int var_id = instr.operand;
                 char name[2] = { (char)var_id, '\0' };
-                int value = lookup_variable(name);
+                int value = lookup_var(vm_env, name);
                 stack[sp++] = value;
                 break;
             }
@@ -99,13 +110,20 @@ void run(Bytecode* bytecode) {
                 int var_id = instr.operand;
                 int value = stack[--sp];
                 char name[2] = { (char)var_id, '\0' };
-                assign_variable(name, value);
+                assign_var(vm_env, name, value);
+                break;
+            }
+            case BC_DEFINE_VAR: {
+                int var_id = instr.operand;
+                int value = stack[--sp];
+                char name[2] = { (char)var_id, '\0' };
+                define_var(vm_env, name, value);
                 break;
             }
 
             case BC_PRINT: {
                 int value = stack[--sp];
-                printf("%d\n", value);
+                vm_output(value);
                 break;
             }
 

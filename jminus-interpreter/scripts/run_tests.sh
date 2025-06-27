@@ -20,6 +20,7 @@ for test_file in "$TEST_DIR"/*_tests.c; do
       "$SRC_DIR"/compiler.c \
       "$SRC_DIR"/vm.c \
       "$SRC_DIR"/interpreter.c \
+      "$SRC_DIR"/environment.c \
       "$SRC_DIR"/winmain.c \
       "$test_file" \
       -o "$out"
