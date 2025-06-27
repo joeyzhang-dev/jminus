@@ -1,10 +1,36 @@
+/**
+ * @file interpreter.c
+ * @brief Direct AST interpreter for the jminus language
+ * @author Joey Zhang
+ * @version 1.0.0
+ *
+ * This file implements a recursive AST interpreter for jminus.
+ * It walks the AST, evaluates expressions, and executes statements
+ * directly, using a global environment for variable storage.
+ *
+ * Execution Model:
+ * - Each statement is executed in order
+ * - Expressions are evaluated recursively
+ * - Variables are managed via the environment module
+ * - Control flow (if/while) is handled with C control structures
+ *
+ * Error Handling:
+ * - Undefined variable access triggers error and exit
+ * - Invalid assignments are detected
+ * - All errors are reported with descriptive messages
+ *
+ * Debugging:
+ * - Prints variable assignments, yap output, and control flow
+ * - Useful for tracing program execution in REPL mode
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "interpreter.h"
 #include "environment.h"
 
-// Global environment for the interpreter
+// Global environment for the interpreter (single scope for now)
 static Environment* global_env = NULL;
 
 int lookup_variable(const char* name) {
@@ -31,6 +57,15 @@ void define_variable(const char* name, int value) {
 // ------------------
 // Expression evaluation
 // ------------------
+
+/**
+ * @brief Recursively evaluates an expression AST node
+ * @param expr Pointer to the expression node
+ * @return The computed integer value
+ *
+ * Handles literals, variables, and binary operations.
+ * Exits on unknown expression types or errors.
+ */
 int eval_expr(Expr* expr) {
     switch (expr->type) {
         case EXPR_LITERAL:
@@ -55,7 +90,6 @@ int eval_expr(Expr* expr) {
             if (strcmp(op, ">")  == 0) return left > right;
             if (strcmp(op, ">=") == 0) return left >= right;
 
-
             fprintf(stderr, "Unknown binary operator: %s\n", op);
             exit(1);
         }
@@ -69,6 +103,14 @@ int eval_expr(Expr* expr) {
 // ------------------
 // Statement execution
 // ------------------
+
+/**
+ * @brief Executes a single statement AST node
+ * @param stmt Pointer to the statement node
+ *
+ * Handles all statement types: let, yap, expr, if, while, block.
+ * Recursively executes nested statements and blocks.
+ */
 void exec_stmt(Stmt* stmt) {
     if (!stmt) return;
 
@@ -90,6 +132,7 @@ void exec_stmt(Stmt* stmt) {
         case STMT_EXPR: {
             Expr* expr = stmt->expr.expression;
 
+            // Handle assignment: x = ...
             if (expr->type == EXPR_BINARY &&
                 strcmp(expr->binary.op.lexeme, "=") == 0 &&
                 expr->binary.left->type == EXPR_VARIABLE) {
@@ -135,11 +178,15 @@ void exec_stmt(Stmt* stmt) {
     }
 }
 
-
-
+/**
+ * @brief Executes an array of AST statements
+ * @param stmts Array of statement nodes
+ * @param count Number of statements
+ *
+ * Calls exec_stmt on each statement in order.
+ */
 void interpret(Stmt** stmts, int count) {
     for (int i = 0; i < count; i++) {
         exec_stmt(stmts[i]);
     }
-}
-
+} 
