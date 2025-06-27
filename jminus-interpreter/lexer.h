@@ -44,42 +44,47 @@
  * - Special: End-of-file and error markers
  */
 typedef enum {
-    // Keywords - Reserved words with special meaning
-    TOKEN_LET,      ///< Variable declaration: let x = 5;
-    TOKEN_IF,       ///< Conditional statement: if (condition) { ... }
-    TOKEN_ELSE,     ///< Alternative branch: else { ... }
-    TOKEN_WHILE,    ///< Loop statement: while (condition) { ... }
-    TOKEN_YAP,      ///< Print function: yap(expression);
-    
-    // Literals - Constant values
-    TOKEN_INT,      ///< Integer literal: 42, -17, 0
-    
-    // Identifiers - Variable and function names
-    TOKEN_IDENTIFIER, ///< Variable name: x, myVar, counter
-    
-    // Operators - Mathematical and logical operations
-    TOKEN_PLUS,     ///< Addition: +
-    TOKEN_MINUS,    ///< Subtraction: -
-    TOKEN_STAR,     ///< Multiplication: *
-    TOKEN_SLASH,    ///< Division: /
-    TOKEN_ASSIGN,   ///< Assignment: =
-    TOKEN_EQUAL,    ///< Equality comparison: ==
-    TOKEN_NOT_EQUAL, ///< Inequality comparison: !=
-    TOKEN_LESS,     ///< Less than: <
-    TOKEN_LESS_EQUAL, ///< Less than or equal: <=
-    TOKEN_GREATER,  ///< Greater than: >
-    TOKEN_GREATER_EQUAL, ///< Greater than or equal: >=
-    
-    // Delimiters - Punctuation that structures the language
-    TOKEN_LPAREN,   ///< Left parenthesis: (
-    TOKEN_RPAREN,   ///< Right parenthesis: )
-    TOKEN_LBRACE,   ///< Left brace: {
-    TOKEN_RBRACE,   ///< Right brace: }
-    TOKEN_SEMICOLON, ///< Statement terminator: ;
-    
-    // Special tokens
-    TOKEN_EOF,      ///< End of file marker
-    TOKEN_ERROR     ///< Error token for invalid input
+    // Keywords
+    TOKEN_LET,
+    TOKEN_FN,
+    TOKEN_YAP,
+    TOKEN_RETURN,
+    TOKEN_IF,
+    TOKEN_WHILE,
+    TOKEN_ELSE,
+
+    // Identifiers and literals
+    TOKEN_IDENTIFIER,
+    TOKEN_INT,
+    TOKEN_FLOAT,
+
+    // Operators
+    TOKEN_ASSIGN,      // =
+    TOKEN_PLUS,        // +
+    TOKEN_MINUS,       // -
+    TOKEN_STAR,        // *
+    TOKEN_SLASH,       // /
+    TOKEN_EQUAL,       // ==
+    TOKEN_BANG,        // !
+    TOKEN_BANG_EQUAL,  // !=
+    TOKEN_NOT_EQUAL,   // != (alias)
+    TOKEN_LESS,        // <
+    TOKEN_LESS_EQUAL,  // <=
+    TOKEN_GREATER,     // >
+    TOKEN_GREATER_EQUAL, // >=
+
+    // Delimiters
+    TOKEN_LPAREN,      // (
+    TOKEN_RPAREN,      // )
+    TOKEN_LBRACE,      // {
+    TOKEN_RBRACE,      // }
+    TOKEN_SEMICOLON,   // ;
+    TOKEN_COMMA,       // ,
+
+    // Special
+    TOKEN_EOF,
+    TOKEN_UNKNOWN,     // Unknown/invalid token
+    TOKEN_ERROR        // Error token for invalid input
 } TokenType;
 
 /**
@@ -95,7 +100,7 @@ typedef enum {
  */
 typedef struct {
     TokenType type;     ///< The type/category of this token
-    const char* lexeme; ///< The actual text that was tokenized
+    char* lexeme;       ///< The actual text that was tokenized
     int line;           ///< Source line number (1-indexed)
 } Token;
 

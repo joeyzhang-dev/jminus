@@ -37,7 +37,6 @@
 
 #include "lexer.h"
 
-// Forward declarations for AST node types
 typedef struct Expr Expr;
 typedef struct Stmt Stmt;
 

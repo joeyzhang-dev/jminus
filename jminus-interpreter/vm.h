@@ -131,4 +131,13 @@ void run(Bytecode* bytecode);
  */
 extern void (*vm_output)(int value);
 
+/**
+ * @brief Default output function for the VM
+ * @param value The value to print
+ * 
+ * This function prints the given value to stdout followed by a newline.
+ * It serves as the default implementation for vm_output.
+ */
+void vm_default_output(int value);
+
 #endif // VM_H 
