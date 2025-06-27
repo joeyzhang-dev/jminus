@@ -8,6 +8,58 @@
 
 ---
 
+## 📋 Table of Contents
+
+- [📚 About jminus](#-about-jminus)
+  - [🎯 What You'll Learn](#-what-youll-learn)
+  - [🏗 Architecture Overview](#-architecture-overview)
+- [🚀 Quick Start](#-quick-start)
+  - [Prerequisites](#prerequisites)
+  - [1. Clone and Build](#1-clone-and-build)
+  - [2. Try the REPL](#2-try-the-repl)
+  - [3. Run a Program File](#3-run-a-program-file)
+  - [4. Run Tests](#4-run-tests)
+- [📖 Language Features](#-language-features)
+  - [Variables and Assignment](#variables-and-assignment)
+  - [Arithmetic Operations](#arithmetic-operations)
+  - [Comparison Operators](#comparison-operators)
+  - [Output](#output)
+  - [Control Flow](#control-flow)
+    - [If Statements](#if-statements)
+    - [While Loops](#while-loops)
+  - [Blocks and Scope](#blocks-and-scope)
+- [📁 Project Structure](#-project-structure)
+  - [Core Components](#core-components)
+- [🔧 Development Guide](#-development-guide)
+  - [Building from Source](#building-from-source)
+  - [Running Tests](#running-tests)
+  - [Debug Mode](#debug-mode)
+  - [REPL Commands](#repl-commands)
+- [🏗 Architecture Deep Dive](#-architecture-deep-dive)
+  - [Lexical Analysis](#lexical-analysis)
+  - [Parsing](#parsing)
+  - [Code Generation](#code-generation)
+  - [Virtual Machine](#virtual-machine)
+  - [Bytecode Instructions](#bytecode-instructions)
+- [🧪 Testing](#-testing)
+  - [Test Philosophy](#test-philosophy)
+  - [Running Tests](#running-tests-1)
+  - [Adding Tests](#adding-tests)
+- [🐛 Debugging](#-debugging)
+  - [Common Issues](#common-issues)
+  - [Debug Tools](#debug-tools)
+  - [Debug Output](#debug-output)
+- [🤝 Contributing](#-contributing)
+  - [Getting Started](#getting-started)
+  - [Development Workflow](#development-workflow)
+  - [Code Style](#code-style)
+  - [Areas for Contribution](#areas-for-contribution)
+- [📄 License](#-license)
+- [🙏 Acknowledgments](#-acknowledgments)
+- [📞 Support](#-support)
+
+---
+
 ## 📚 About jminus
 
 **jminus** is a small, educational programming language designed to demonstrate compiler construction principles. It features a complete toolchain from source code to execution, including:
